@@ -47,7 +47,7 @@ from auth.users where email = 'sv@example.com';
 1. `supabase/migrations/20261118_sv_requests_quote_options.sql`
 2. `supabase/migrations/20261119_private_files_and_design_review.sql`
 
-Vercel 프로젝트의 **Settings → Environment Variables**에 `SUPABASE_SERVICE_ROLE_KEY`를 추가하고 Supabase **Settings → API Keys → Legacy API keys**의 `service_role` 값을 넣은 뒤 다시 배포하세요. 이 비밀 키는 Vercel 서버 함수에서만 사용되며, 앱 파일이나 GitHub에는 넣지 마세요.
+Vercel 프로젝트의 **Settings → Environment Variables**에서 `SUPABASE_SERVICE_ROLE_KEY`에 Supabase의 서버용 **Secret key (`sb_secret_...`)**를 넣고 다시 배포하세요. 예전 형식의 `service_role` JWT (`eyJ...`)도 사용할 수 있습니다. 새 Secret key는 JWT가 아니므로 서버에서 `apikey` 헤더에만 전달합니다. 이 비밀 키는 Vercel 서버 함수에서만 사용되며, 앱 파일이나 GitHub에는 넣지 마세요.
 
 요청 작성 화면에서 참고 파일을 첨부할 수 있습니다. 디자이너는 요청 상세에서 시안 파일을 올리고 **시안 검토 링크 만들기**를 눌러 링크를 복사해 요청자에게 전달합니다. 요청자는 링크에서 파일을 내려받고 승인하거나 수정 의견을 보낼 수 있으며, 회신은 디자이너 대시보드 상단에 표시됩니다. 파일은 비공개 Storage에 저장되며 공유 링크의 파일 다운로드 주소는 1시간 동안 유효합니다.
 

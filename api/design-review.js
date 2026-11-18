@@ -14,7 +14,14 @@ function encodePath(value) { return String(value).split("/").map(encodeURICompon
 function tokenHash(token) { return crypto.createHash("sha256").update(token).digest("hex"); }
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml", "application/pdf", "application/postscript", "image/vnd.adobe.photoshop"]);
 function headers(prefer) {
-  return { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json", ...(prefer ? { Prefer: prefer } : {}) };
+  // New Supabase secret keys (sb_secret_...) are API keys, not JWTs. Only send
+  // them via apikey; legacy service_role JWTs also need Authorization: Bearer.
+  return {
+    apikey: SERVICE_KEY,
+    ...(!SERVICE_KEY.startsWith("sb_secret_") ? { Authorization: `Bearer ${SERVICE_KEY}` } : {}),
+    "Content-Type": "application/json",
+    ...(prefer ? { Prefer: prefer } : {})
+  };
 }
 async function db(path, options = {}) {
   const response = await fetch(`${SUPABASE_URL}${path}`, {
