@@ -367,14 +367,17 @@ function getAllowedFileType(file) {
   const byExtension = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", svg: "image/svg+xml", pdf: "application/pdf", ai: "application/postscript", psd: "image/vnd.adobe.photoshop" };
   return byExtension[extension] || file.type || "";
 }
+function storageFileExtension(file) {
+  const extension = file.name.split(".").pop().toLowerCase();
+  return ["png", "jpg", "jpeg", "webp", "svg", "pdf", "ai", "psd"].includes(extension) ? extension : "bin";
+}
 async function uploadRequestAttachments(request) {
   const maxBytes = 20 * 1024 * 1024;
   for (const file of form.attachments || []) {
     const mimeType = getAllowedFileType(file);
     if (!mimeType || file.size > maxBytes) throw new Error(`${file.name}: 지원하지 않는 형식이거나 20MB를 초과했습니다.`);
-    const safeName = file.name.replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-120);
     if (currentUser) {
-      const objectPath = `${request.id}/request_attachment/${crypto.randomUUID()}_${safeName}`;
+      const objectPath = `${request.id}/request_attachment/${crypto.randomUUID()}.${storageFileExtension(file)}`;
       await DesignFlowData.uploadFile(file, objectPath, mimeType);
       await DesignFlowData.insert("design_files", { request_id: request.id, kind: "request_attachment", version: 0, file_name: file.name, object_path: objectPath, mime_type: mimeType, size_bytes: file.size, description: null, uploaded_by: currentUser.id });
     } else {
@@ -398,8 +401,7 @@ async function uploadDetailFiles(event) {
     for (const file of files) {
       const mimeType = getAllowedFileType(file);
       if (!mimeType || file.size > 20 * 1024 * 1024) throw new Error(`${file.name}: 지원하지 않는 형식이거나 20MB를 초과했습니다.`);
-      const safeName = file.name.replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-120);
-      const objectPath = `${request.id}/${kind}/${crypto.randomUUID()}_${safeName}`;
+      const objectPath = `${request.id}/${kind}/${crypto.randomUUID()}.${storageFileExtension(file)}`;
       await DesignFlowData.uploadFile(file, objectPath, mimeType);
       await DesignFlowData.insert("design_files", { request_id: request.id, kind, version: 0, file_name: file.name, object_path: objectPath, mime_type: mimeType, size_bytes: file.size, description: description || null, uploaded_by: currentUser.id });
     }

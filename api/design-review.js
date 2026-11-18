@@ -87,8 +87,9 @@ module.exports = async function handler(req, res) {
       const existing = await db(`/rest/v1/design_files?select=id&request_id=eq.${encodeURIComponent(requestId)}&kind=eq.request_attachment`);
       if (existing.length >= 10) return json(res, 400, { error: "요청당 첨부 파일은 최대 10개까지 등록할 수 있습니다." });
       if (action === "guest_upload") {
-        const safeName = fileName.replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-120);
-        const objectPath = `${requestId}/request_attachment/${crypto.randomUUID()}_${safeName}`;
+        const extension = fileName.split(".").pop().toLowerCase();
+        const safeExtension = ["png", "jpg", "jpeg", "webp", "svg", "pdf", "ai", "psd"].includes(extension) ? extension : "bin";
+        const objectPath = `${requestId}/request_attachment/${crypto.randomUUID()}.${safeExtension}`;
         const signed = await db(`/storage/v1/object/upload/sign/${BUCKET}/${encodePath(objectPath)}`, { method: "POST", body: {} });
         if (!signed?.url) throw new Error("파일 업로드 링크를 만들지 못했습니다.");
         const uploadUrl = signed.url.startsWith("http") ? signed.url : `${SUPABASE_URL}/storage/v1${signed.url.startsWith("/") ? signed.url : `/${signed.url}`}`;
