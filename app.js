@@ -42,15 +42,9 @@ async function loadWorkspaceData() {
 }
 async function saveData() {
   if (currentProfile?.role !== "designer") return;
+  const priorRequestStatuses = new Map(db.requests.map(r => [r.id, r.status]));
+  syncRequestStatusesFromTasks();
   try {
-    for (const r of db.requests) {
-      const row = rowRequest(r); const serialized = JSON.stringify(row); const previous = savedRequestRows.get(r.id);
-      if (previous !== serialized) {
-        if (previous) await DesignFlowData.update("requests", r.id, row);
-        else await DesignFlowData.insert("requests", row);
-        savedRequestRows.set(r.id, serialized);
-      }
-    }
     for (const t of db.tasks) {
       const row = rowTask(t); const serialized = JSON.stringify(row); const previous = savedTaskRows.get(t.id);
       if (previous !== serialized) {
@@ -59,7 +53,27 @@ async function saveData() {
         savedTaskRows.set(t.id, serialized);
       }
     }
-  } catch (error) { notify(`저장하지 못했어요: ${error.message}`); throw error; }
+    for (const r of db.requests) {
+      const row = rowRequest(r); const serialized = JSON.stringify(row); const previous = savedRequestRows.get(r.id);
+      if (previous !== serialized) {
+        if (previous) await DesignFlowData.update("requests", r.id, row);
+        else await DesignFlowData.insert("requests", row);
+        savedRequestRows.set(r.id, serialized);
+      }
+    }
+  } catch (error) {
+    for (const r of db.requests) if (priorRequestStatuses.has(r.id)) r.status = priorRequestStatuses.get(r.id);
+    notify(`저장하지 못했어요: ${error.message}`); throw error;
+  }
+}
+function syncRequestStatusesFromTasks() {
+  for (const r of db.requests) {
+    const linked = db.tasks.filter(t => t.requestId === r.id);
+    if (!linked.length) continue;
+    if (linked.every(t => t.status === "완료")) r.status = "완료";
+    else if (linked.every(t => t.status === "보류")) r.status = "보류";
+    else r.status = "작업 진행";
+  }
 }
 function esc(value = "") { return String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function dateLabel(value) { if (!value) return "미정"; const d = new Date(`${value}T00:00:00`); return `${d.getMonth() + 1}월 ${d.getDate()}일`; }
@@ -133,7 +147,7 @@ function requestsPage() {
   let rows = [...db.requests].sort((a, b) => b.created.localeCompare(a.created));
   if (requestFilter !== "전체") rows = rows.filter(r => r.status === requestFilter);
   if (searchTerm) rows = rows.filter(r => `${r.title} ${r.brand} ${r.requester}`.toLowerCase().includes(searchTerm.toLowerCase()));
-  return `<section class="page">${head("REQUESTS", isSv ? "요청 진행상황" : "요청 관리", isSv ? `등록된 요청 ${db.requests.length}건의 상태와 진행 내용을 조회합니다.` : `총 ${db.requests.length}건의 디자인 요청을 관리합니다.`, `<button class="btn primary" data-go="request-form">＋　새 작업 요청</button>`)}<div class="toolbar"><div class="search"><input id="request-search" placeholder="요청명, 브랜드, 요청자로 검색" value="${esc(searchTerm)}" /></div><select class="select" id="request-filter">${["전체", "접수", "검토 중", "정보 요청", "분석 완료", "작업 진행", "완료", "보류"].map(v => `<option ${requestFilter === v ? "selected" : ""}>${v}</option>`).join("")}</select><button class="btn">필터　⌄</button></div><div class="panel request-list"><div class="list-head"><span>요청 내용</span><span>브랜드 / 요청자</span><span>접수일</span><span>희망 완료일</span><span>상태</span></div>${rows.map(r => `<div class="list-item" data-request="${r.id}"><div><div class="row-title">${esc(r.title)}</div><div class="row-meta"><span>${esc(r.type)}</span>${badge(r.priority, priorityClass(r.priority))}</div><div class="list-mobile-meta">${esc(r.brand)} · ${dateLabel(r.created)}</div></div><div>${esc(r.brand)}<div class="row-meta">${esc(r.requester)}</div></div><div>${dateLabel(r.created)}</div><div>${dateLabel(r.deadline)}</div><div>${badge(r.status)}</div></div>`).join("") || `<div class="empty">조건에 맞는 요청이 없습니다.</div>`}</div></section>`;
+  return `<section class="page">${head("REQUESTS", isSv ? "요청 진행상황" : "요청 관리", isSv ? `등록된 요청 ${db.requests.length}건의 상태와 진행 내용을 조회합니다.` : `총 ${db.requests.length}건의 디자인 요청을 관리합니다. 작업이 생성된 요청은 작업 상태에 따라 자동으로 완료 처리됩니다.`, `<button class="btn primary" data-go="request-form">＋　새 작업 요청</button>`)}<div class="toolbar"><div class="search"><input id="request-search" placeholder="요청명, 브랜드, 요청자로 검색" value="${esc(searchTerm)}" /></div><select class="select" id="request-filter">${["전체", "접수", "검토 중", "정보 요청", "분석 완료", "작업 진행", "완료", "보류"].map(v => `<option ${requestFilter === v ? "selected" : ""}>${v}</option>`).join("")}</select><button class="btn">필터　⌄</button></div><div class="panel request-list"><div class="list-head"><span>요청 내용</span><span>브랜드 / 요청자</span><span>접수일</span><span>희망 완료일</span><span>상태</span></div>${rows.map(r => `<div class="list-item" data-request="${r.id}"><div><div class="row-title">${esc(r.title)}</div><div class="row-meta"><span>${esc(r.type)}</span>${badge(r.priority, priorityClass(r.priority))}</div><div class="list-mobile-meta">${esc(r.brand)} · ${dateLabel(r.created)}</div></div><div>${esc(r.brand)}<div class="row-meta">${esc(r.requester)}</div></div><div>${dateLabel(r.created)}</div><div>${dateLabel(r.deadline)}</div><div>${badge(r.status)}</div></div>`).join("") || `<div class="empty">조건에 맞는 요청이 없습니다.</div>`}</div></section>`;
 }
 
 function requestDetail() {
@@ -262,7 +276,7 @@ function bindEvents() {
   const search = document.getElementById("request-search"); if (search) search.addEventListener("input", e => { searchTerm = e.target.value; const pos = e.target.selectionStart; render(); const next = document.getElementById("request-search"); next.focus(); next.setSelectionRange(pos,pos); });
   const filter = document.getElementById("request-filter"); if (filter) filter.addEventListener("change", e => { requestFilter = e.target.value; render(); });
   const tf = document.getElementById("task-filter"); if (tf) tf.addEventListener("change", e => { taskFilter = e.target.value; render(); });
-  document.querySelectorAll("[data-task-status]").forEach(el => el.addEventListener("change", async e => { const t = db.tasks.find(x => x.id === e.target.dataset.taskStatus); if (t) { const previous = t.status; t.status = e.target.value; try { await saveData(); notify("작업 상태를 변경했어요."); } catch { t.status = previous; } render(); } }));
+  document.querySelectorAll("[data-task-status]").forEach(el => el.addEventListener("change", async e => { const t = db.tasks.find(x => x.id === e.target.dataset.taskStatus); if (t) { const previous = t.status; t.status = e.target.value; try { await saveData(); const request = db.requests.find(r => r.id === t.requestId); notify(request?.status === "완료" ? "연결된 모든 작업이 완료되어 요청도 완료 처리됐어요." : "작업 상태와 요청 상태를 함께 저장했어요."); } catch { t.status = previous; } render(); } }));
   document.querySelectorAll("[data-type]").forEach(el => el.addEventListener("click", () => { form.type = el.dataset.type; render(); }));
   const back = document.getElementById("form-back"); if (back) back.addEventListener("click", () => { setFormFields(); formStep--; render(); });
   const next = document.getElementById("form-next"); if (next) next.addEventListener("click", async () => { if (!validateStep()) return; if (formStep < 2) { formStep++; render(); } else await submitRequest(); });
@@ -270,8 +284,8 @@ function bindEvents() {
   document.querySelectorAll("[data-remove-step]").forEach(el => el.addEventListener("click", async () => { const r = db.requests.find(x => x.id === selectedRequest); await saveAnalysis(false); r.ai.steps.splice(Number(el.dataset.removeStep), 1); await saveData(); render(); }));
   const save = document.getElementById("save-analysis"); if (save) save.addEventListener("click", async () => { await saveAnalysis(false); notify("분석 제안을 저장했어요."); });
   const approve = document.getElementById("approve-analysis"); if (approve) approve.addEventListener("click", approveRequest);
-  const rs = document.getElementById("request-status"); if (rs) rs.addEventListener("change", async e => { const r = db.requests.find(x => x.id === selectedRequest); const previous = r.status; r.status = e.target.value; try { await saveData(); notify("요청 상태를 변경했어요."); } catch { r.status = previous; } render(); });
-  const tds = document.getElementById("task-detail-status"); if (tds) tds.addEventListener("change", async e => { const t = db.tasks.find(x => x.id === selectedTask); const previous = t.status; t.status = e.target.value; try { await saveData(); notify("작업 상태를 변경했어요."); } catch { t.status = previous; } render(); });
+  const rs = document.getElementById("request-status"); if (rs) rs.addEventListener("change", async e => { const r = db.requests.find(x => x.id === selectedRequest); if (db.tasks.some(t => t.requestId === r?.id)) { notify("작업이 생성된 요청은 작업관리의 진행 상태를 기준으로 자동 갱신됩니다."); render(); return; } const previous = r.status; r.status = e.target.value; try { await saveData(); notify("요청 상태를 변경했어요."); } catch { r.status = previous; } render(); });
+  const tds = document.getElementById("task-detail-status"); if (tds) tds.addEventListener("change", async e => { const t = db.tasks.find(x => x.id === selectedTask); const previous = t.status; t.status = e.target.value; try { await saveData(); const request = db.requests.find(r => r.id === t.requestId); notify(request?.status === "완료" ? "연결된 모든 작업이 완료되어 요청도 완료 처리됐어요." : "작업 상태와 요청 상태를 함께 저장했어요."); } catch { t.status = previous; } render(); });
   const addTime = document.getElementById("add-time"); if (addTime) addTime.addEventListener("click", logTime);
   document.querySelectorAll(".check-row input").forEach(el => el.addEventListener("change", async () => { if (selectedTask) { const t = db.tasks.find(x => x.id === selectedTask); if (t && el.checked) t.status = "진행 중"; await saveData(); } }));
   bindQuoteEvents();
