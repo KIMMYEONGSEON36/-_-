@@ -1,20 +1,9 @@
-const STORE_KEY = "design-flow-demo-v1";
+const STORE_KEY = "design-flow-demo-v2";
 const today = new Date();
 const isoDay = (offset = 0) => { const d = new Date(today); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10); };
 const initialData = {
-  requests: [
-    { id: "DF-26041", title: "겨울 신메뉴 포스터 디자인", type: "신규 제작", brand: "미카도스시", requester: "김민지", created: isoDay(-1), deadline: isoDay(3), status: "검토 중", priority: "높음", purpose: "겨울 시즌 신메뉴 홍보", details: "매장 입구와 테이블에 비치할 겨울 신메뉴 포스터가 필요합니다. 따뜻하고 계절감 있는 분위기로 부탁드립니다.", product: "포스터", quantity: "매장별 2장", use: "매장 입구, 테이블", ai: { summary: "겨울 신메뉴를 매장 고객에게 소개하는 포스터 제작 요청입니다.", missing: ["신메뉴 사진", "가격 및 행사 기간"], steps: [{ name: "요청 내용 및 자료 확인", minutes: 30 }, { name: "디자인 방향 및 레이아웃", minutes: 60 }, { name: "포스터 디자인 제작", minutes: 120 }, { name: "검토 및 최종 파일 준비", minutes: 45 }] } },
-    { id: "DF-26040", title: "가맹점 오픈 안내 현수막 수정", type: "수정 요청", brand: "탄광맥주", requester: "박준호", created: isoDay(-2), deadline: isoDay(1), status: "정보 요청", priority: "긴급", purpose: "신규 매장 오픈 홍보", details: "기존 오픈 현수막에서 매장 주소와 오픈 날짜를 변경하고 싶습니다.", product: "현수막", quantity: "1장", use: "매장 외부", ai: { summary: "기존 오픈 현수막의 주소와 날짜를 변경하는 수정 요청입니다.", missing: ["변경할 주소", "확정된 오픈 날짜"], steps: [{ name: "기존 파일 및 변경 정보 확인", minutes: 20 }, { name: "문구와 정보 수정", minutes: 35 }, { name: "최종 확인 및 출력 파일 준비", minutes: 20 }] } },
-    { id: "DF-26039", title: "테이블 메뉴판 추가 인쇄", type: "재주문", brand: "goc커피", requester: "이서연", created: isoDay(-3), deadline: isoDay(5), status: "접수", priority: "보통", purpose: "매장 메뉴판 추가 비치", details: "지난번 제작한 테이블 메뉴판과 같은 디자인으로 추가 주문합니다.", product: "메뉴판", quantity: "20부", use: "매장 테이블", ai: { summary: "기존 테이블 메뉴판 디자인을 동일하게 추가 제작하는 요청입니다.", missing: ["기존 제작 파일 확인", "배송 정보"], steps: [{ name: "기존 제작 파일 확인", minutes: 15 }, { name: "수량 및 출력 사양 확인", minutes: 20 }, { name: "인쇄용 파일 전달", minutes: 15 }] } },
-    { id: "DF-26038", title: "SNS 이벤트 이미지 상담", type: "상담·기획", brand: "코타코", requester: "최유진", created: isoDay(-4), deadline: isoDay(7), status: "분석 완료", priority: "보통", purpose: "신규 고객 이벤트 홍보", details: "인스타그램에서 사용할 이벤트 이미지 구성이 필요합니다. 어떤 형태가 좋을지 상담하고 싶어요.", product: "SNS 이미지", quantity: "미정", use: "인스타그램", ai: { summary: "인스타그램 이벤트 홍보에 적합한 이미지 방향을 상담하는 요청입니다.", missing: ["이벤트 내용 및 참여 방법", "게시 희망일"], steps: [{ name: "이벤트 목표 및 내용 확인", minutes: 30 }, { name: "콘텐츠 구성 제안", minutes: 45 }, { name: "이미지 제작 범위 협의", minutes: 30 }] } }
-  ],
-  tasks: [
-    { id: "TS-118", requestId: "DF-26041", name: "겨울 신메뉴 포스터 디자인", step: "디자인 방향 및 레이아웃", brand: "미카도스시", due: isoDay(1), status: "진행 중", priority: "높음", estimate: 60, actual: 25 },
-    { id: "TS-117", requestId: "DF-26040", name: "오픈 현수막 수정", step: "변경 정보 확인", brand: "탄광맥주", due: isoDay(0), status: "대기", priority: "긴급", estimate: 20, actual: 0 },
-    { id: "TS-116", requestId: "DF-26036", name: "봄 시즌 메뉴 촬영 안내물", step: "최종 파일 준비", brand: "우동담아", due: isoDay(2), status: "검토", priority: "보통", estimate: 45, actual: 50 },
-    { id: "TS-115", requestId: "DF-26035", name: "매장 유리창 프로모션 시트", step: "시안 제작", brand: "미카도스시", due: isoDay(4), status: "진행 중", priority: "보통", estimate: 90, actual: 35 },
-    { id: "TS-114", requestId: "DF-26034", name: "브랜드 소개 리플렛 재주문", step: "인쇄 파일 확인", brand: "탄광맥주", due: isoDay(-1), status: "대기", priority: "낮음", estimate: 30, actual: 0 }
-  ],
+  requests: [],
+  tasks: [],
   timeLogs: []
 };
 let db = loadData();
@@ -29,7 +18,11 @@ let taskFilter = "전체";
 let toastTimer;
 
 function loadData() {
-  try { const saved = localStorage.getItem(STORE_KEY); if (saved) return JSON.parse(saved); } catch (e) { console.warn("데모 저장 정보를 불러오지 못했습니다.", e); }
+  try {
+    // Clear the original seeded examples once when a browser first loads this version.
+    localStorage.removeItem("design-flow-demo-v1");
+    const saved = localStorage.getItem(STORE_KEY); if (saved) return JSON.parse(saved);
+  } catch (e) { console.warn("데모 저장 정보를 불러오지 못했습니다.", e); }
   return structuredClone(initialData);
 }
 function saveData() { try { localStorage.setItem(STORE_KEY, JSON.stringify(db)); } catch (e) { notify("이 브라우저에서는 변경 사항을 저장하지 못했습니다."); } }
