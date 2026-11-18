@@ -153,6 +153,7 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
 .choice.selected .choice-mark { border-color: var(--blue); background: var(--blue); color: white; }
 .form-footer { display: flex; justify-content: space-between; gap: 10px; padding-top: 20px; margin-top: 23px; border-top: 1px solid #eef0f3; }
 .form-error { margin-top: 10px; color: var(--red); font-size: 11px; }
+.workspace-alert { margin: 16px 24px 0; padding: 12px 14px; border: 1px solid #f1c9a8; border-radius: 8px; background: #fff8f1; color: #8c4b1c; font-size: 12px; line-height: 1.6; }
 .review-list { display: grid; }
 .review-row { display: grid; grid-template-columns: 120px minmax(0,1fr); gap: 12px; padding: 12px 0; border-bottom: 1px solid #f0f2f5; font-size: 11px; }
 .review-row span:first-child { color: #98a2ad; }

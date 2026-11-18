@@ -13,6 +13,7 @@ let toastTimer;
 let currentUser = null;
 let currentProfile = null;
 let bootError = "";
+let workspaceError = "";
 let savedRequestRows = new Map();
 let savedTaskRows = new Map();
 let priceEditId = null;
@@ -76,7 +77,7 @@ function layout(content) {
   const current = route === "request-form" || route === "request-success" ? "request-form" : route;
   const displayName = currentProfile?.display_name || "직원";
   const avatarName = displayName.slice(0, 1);
-  return `<div class="shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">D</div><div><div class="brand-name">Design Flow</div><div class="brand-caption">DESIGN WORKSPACE</div></div></div><div class="nav-label">${currentProfile?.role === "designer" ? "DESIGNER WORKSPACE" : "SV WORKSPACE"}</div><nav class="nav">${navItems.map(([key, icon, label]) => `<button class="nav-item ${current === key ? "active" : ""}" data-go="${key}"><span class="nav-icon">${icon}</span>${label}</button>`).join("")}${currentProfile?.role === "designer" ? `<button class="nav-item ${current === "request-form" ? "active" : ""}" data-go="request-form"><span class="nav-icon">＋</span>새 요청 접수</button>` : ""}</nav><div class="sidebar-bottom"><div class="demo-note"><strong>공용 데이터 연결</strong><span>요청과 단가가 승인된 계정에 공유됩니다.<br>견적 단가에는 부가세·배송비가 포함됩니다.</span></div><div class="user-chip"><div class="avatar">${esc(avatarName)}</div><div><div class="user-name">${esc(displayName)}</div><div class="user-role">${currentProfile?.role === "designer" ? "디자이너" : "SV"}</div></div></div></div></aside><main class="main"><header class="topbar"><div class="crumb-wrap"><button class="mobile-menu" id="menu-toggle" aria-label="메뉴 열기">☰</button><div class="crumb">워크스페이스　/　${routeTitle()}</div></div><div class="top-actions"><button class="btn small" id="sign-out">로그아웃</button><div class="avatar">${esc(avatarName)}</div></div></header>${content}<div class="footer-note">Design Flow · 공용 데이터 공간</div></main></div>`;
+  return `<div class="shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">D</div><div><div class="brand-name">Design Flow</div><div class="brand-caption">DESIGN WORKSPACE</div></div></div><div class="nav-label">${currentProfile?.role === "designer" ? "DESIGNER WORKSPACE" : "SV WORKSPACE"}</div><nav class="nav">${navItems.map(([key, icon, label]) => `<button class="nav-item ${current === key ? "active" : ""}" data-go="${key}"><span class="nav-icon">${icon}</span>${label}</button>`).join("")}${currentProfile?.role === "designer" ? `<button class="nav-item ${current === "request-form" ? "active" : ""}" data-go="request-form"><span class="nav-icon">＋</span>새 요청 접수</button>` : ""}</nav><div class="sidebar-bottom"><div class="demo-note"><strong>공용 데이터 연결</strong><span>요청과 단가가 승인된 계정에 공유됩니다.<br>견적 단가에는 부가세·배송비가 포함됩니다.</span></div><div class="user-chip"><div class="avatar">${esc(avatarName)}</div><div><div class="user-name">${esc(displayName)}</div><div class="user-role">${currentProfile?.role === "designer" ? "디자이너" : "SV"}</div></div></div></div></aside><main class="main"><header class="topbar"><div class="crumb-wrap"><button class="mobile-menu" id="menu-toggle" aria-label="메뉴 열기">☰</button><div class="crumb">워크스페이스　/　${routeTitle()}</div></div><div class="top-actions"><button class="btn small" id="sign-out">로그아웃</button><div class="avatar">${esc(avatarName)}</div></div></header>${workspaceError ? `<div class="workspace-alert">${esc(workspaceError)}</div>` : ""}${content}<div class="footer-note">Design Flow · 공용 데이터 공간</div></main></div>`;
 }
 function routeTitle() { return ({ dashboard: "대시보드", requests: "요청 관리", "request-detail": "요청 상세", "request-form": "새 요청 접수", "request-success": "접수 완료", tasks: "작업 관리", "task-detail": "작업 상세", calendar: "일정", quote: "견적 확인", prices: "단가표 관리" })[route] || "대시보드"; }
 function head(eyebrow, title, desc, action = "") { return `<div class="page-head"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><div class="subhead">${desc}</div></div>${action}</div>`; }
@@ -204,8 +205,9 @@ async function initializeApp() {
         render();
         return;
       }
-      await loadWorkspaceData();
       route = currentProfile.role === "sv" ? "quote" : "dashboard";
+      try { await loadWorkspaceData(); workspaceError = ""; }
+      catch (error) { workspaceError = `로그인은 됐지만 업무 데이터를 불러오지 못했습니다. Supabase의 관련 표 권한을 확인해주세요. (${error.message})`; }
     } else if (!["request-form", "request-success"].includes(route)) route = "login";
   } catch (error) {
     bootError = `${error.message}. Supabase의 schema.sql 적용 여부를 확인해주세요.`;
@@ -241,7 +243,10 @@ function bindEvents() {
       currentUser = await DesignFlowData.signIn(document.getElementById("login-email").value.trim(), document.getElementById("login-password").value);
       currentProfile = await DesignFlowData.getProfile();
       if (!currentProfile) { await DesignFlowData.signOut(); currentUser = null; throw new Error("계정에 디자이너 또는 SV 역할이 지정되지 않았습니다."); }
-      await loadWorkspaceData(); bootError = ""; route = currentProfile.role === "sv" ? "quote" : "dashboard"; render();
+      bootError = ""; route = currentProfile.role === "sv" ? "quote" : "dashboard";
+      try { await loadWorkspaceData(); workspaceError = ""; }
+      catch (loadError) { workspaceError = `로그인은 됐지만 업무 데이터를 불러오지 못했습니다. Supabase의 관련 표 권한을 확인해주세요. (${loadError.message})`; }
+      render();
     } catch (err) { currentUser = null; currentProfile = null; error.textContent = err.message; button.disabled = false; }
   });
   const search = document.getElementById("request-search"); if (search) search.addEventListener("input", e => { searchTerm = e.target.value; const pos = e.target.selectionStart; render(); const next = document.getElementById("request-search"); next.focus(); next.setSelectionRange(pos,pos); });
