@@ -1,0 +1,143 @@
+-- Design Flow: shared requests, tasks, time logs, and quote price list.
+-- Run this in Supabase Dashboard > SQL Editor as the project owner.
+
+create table if not exists public.profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  display_name text not null,
+  role text not null check (role in ('designer', 'sv')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.requests (
+  id text primary key,
+  title text not null,
+  type text not null,
+  brand text not null,
+  store text,
+  requester text not null,
+  contact text,
+  created date not null default current_date,
+  deadline date,
+  status text not null default '접수',
+  priority text not null default '보통',
+  purpose text not null,
+  details text not null,
+  product text,
+  quantity text,
+  use text,
+  reference text,
+  ai jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.tasks (
+  id text primary key,
+  request_id text not null references public.requests(id) on delete cascade,
+  name text not null,
+  step text not null,
+  brand text not null,
+  due date,
+  status text not null default '대기',
+  priority text not null default '보통',
+  estimate integer not null default 0 check (estimate >= 0),
+  actual integer not null default 0 check (actual >= 0),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.time_logs (
+  id bigint generated always as identity primary key,
+  task_id text not null references public.tasks(id) on delete cascade,
+  minutes integer not null check (minutes > 0),
+  note text,
+  date date not null default current_date,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.price_items (
+  id bigint generated always as identity primary key,
+  product text not null,
+  size text not null,
+  material text not null,
+  unit_price_krw integer not null check (unit_price_krw >= 0),
+  is_active boolean not null default true,
+  updated_at timestamptz not null default now(),
+  unique (product, size, material)
+);
+
+create or replace function public.current_design_flow_role()
+returns text
+language sql stable security definer
+set search_path = public
+as $$
+  select role from public.profiles where user_id = auth.uid()
+$$;
+
+revoke all on function public.current_design_flow_role() from public, anon;
+grant execute on function public.current_design_flow_role() to authenticated;
+
+alter table public.profiles enable row level security;
+alter table public.requests enable row level security;
+alter table public.tasks enable row level security;
+alter table public.time_logs enable row level security;
+alter table public.price_items enable row level security;
+
+revoke all on public.profiles, public.requests, public.tasks, public.time_logs, public.price_items from anon, authenticated;
+grant usage on schema public to anon, authenticated;
+
+drop policy if exists "profile owner can read" on public.profiles;
+create policy "profile owner can read" on public.profiles
+  for select to authenticated using (user_id = auth.uid());
+
+drop policy if exists "public can submit requests" on public.requests;
+create policy "public can submit requests" on public.requests
+  for insert to anon with check (true);
+drop policy if exists "designer can read requests" on public.requests;
+create policy "designer can read requests" on public.requests
+  for select to authenticated using (public.current_design_flow_role() = 'designer');
+drop policy if exists "designer can add requests" on public.requests;
+create policy "designer can add requests" on public.requests
+  for insert to authenticated with check (public.current_design_flow_role() = 'designer');
+drop policy if exists "designer can update requests" on public.requests;
+create policy "designer can update requests" on public.requests
+  for update to authenticated using (public.current_design_flow_role() = 'designer') with check (public.current_design_flow_role() = 'designer');
+drop policy if exists "designer can delete requests" on public.requests;
+create policy "designer can delete requests" on public.requests
+  for delete to authenticated using (public.current_design_flow_role() = 'designer');
+
+drop policy if exists "designer can manage tasks" on public.tasks;
+create policy "designer can manage tasks" on public.tasks
+  for all to authenticated using (public.current_design_flow_role() = 'designer') with check (public.current_design_flow_role() = 'designer');
+drop policy if exists "designer can manage time logs" on public.time_logs;
+create policy "designer can manage time logs" on public.time_logs
+  for all to authenticated using (public.current_design_flow_role() = 'designer') with check (public.current_design_flow_role() = 'designer');
+
+drop policy if exists "designer and sv can read prices" on public.price_items;
+create policy "designer and sv can read prices" on public.price_items
+  for select to authenticated using (
+    public.current_design_flow_role() = 'designer'
+    or (public.current_design_flow_role() = 'sv' and is_active = true)
+  );
+drop policy if exists "designer can add prices" on public.price_items;
+create policy "designer can add prices" on public.price_items
+  for insert to authenticated with check (public.current_design_flow_role() = 'designer');
+drop policy if exists "designer can update prices" on public.price_items;
+create policy "designer can update prices" on public.price_items
+  for update to authenticated using (public.current_design_flow_role() = 'designer') with check (public.current_design_flow_role() = 'designer');
+drop policy if exists "designer can delete prices" on public.price_items;
+create policy "designer can delete prices" on public.price_items
+  for delete to authenticated using (public.current_design_flow_role() = 'designer');
+
+grant select on public.profiles to authenticated;
+grant select, insert, update, delete on public.requests to authenticated;
+grant insert (id, title, type, brand, store, requester, contact, created, deadline, status, priority, purpose, details, product, quantity, use, reference)
+  on public.requests to anon;
+grant select, insert, update, delete on public.tasks, public.time_logs, public.price_items to authenticated;
+grant usage, select on sequence public.price_items_id_seq to authenticated;
+grant usage, select on sequence public.time_logs_id_seq to authenticated;
+
+-- After adding a user in Supabase Authentication > Users, run one statement
+-- per account in the SQL Editor to assign the role:
+-- insert into public.profiles (user_id, display_name, role)
+-- select id, '디자인 담당자', 'designer' from auth.users where email = 'designer@example.com';
+-- insert into public.profiles (user_id, display_name, role)
+-- select id, 'SV 담당자', 'sv' from auth.users where email = 'sv@example.com';
