@@ -59,10 +59,16 @@ create table if not exists public.price_items (
   size text not null,
   material text not null,
   unit_price_krw integer not null check (unit_price_krw >= 0),
+  minimum_quantity integer not null default 1 check (minimum_quantity >= 1),
+  jeju_shipping_krw integer not null default 0 check (jeju_shipping_krw >= 0),
   is_active boolean not null default true,
   updated_at timestamptz not null default now(),
   unique (product, size, material)
 );
+
+-- Safe for projects created before minimum quantities and Jeju shipping were added.
+alter table public.price_items add column if not exists minimum_quantity integer not null default 1 check (minimum_quantity >= 1);
+alter table public.price_items add column if not exists jeju_shipping_krw integer not null default 0 check (jeju_shipping_krw >= 0);
 
 create or replace function public.current_design_flow_role()
 returns text
@@ -92,11 +98,13 @@ drop policy if exists "public can submit requests" on public.requests;
 create policy "public can submit requests" on public.requests
   for insert to anon with check (true);
 drop policy if exists "designer can read requests" on public.requests;
-create policy "designer can read requests" on public.requests
-  for select to authenticated using (public.current_design_flow_role() = 'designer');
+drop policy if exists "staff can read requests" on public.requests;
+create policy "staff can read requests" on public.requests
+  for select to authenticated using (public.current_design_flow_role() in ('designer', 'sv'));
 drop policy if exists "designer can add requests" on public.requests;
-create policy "designer can add requests" on public.requests
-  for insert to authenticated with check (public.current_design_flow_role() = 'designer');
+drop policy if exists "staff can add requests" on public.requests;
+create policy "staff can add requests" on public.requests
+  for insert to authenticated with check (public.current_design_flow_role() in ('designer', 'sv'));
 drop policy if exists "designer can update requests" on public.requests;
 create policy "designer can update requests" on public.requests
   for update to authenticated using (public.current_design_flow_role() = 'designer') with check (public.current_design_flow_role() = 'designer');
@@ -107,6 +115,9 @@ create policy "designer can delete requests" on public.requests
 drop policy if exists "designer can manage tasks" on public.tasks;
 create policy "designer can manage tasks" on public.tasks
   for all to authenticated using (public.current_design_flow_role() = 'designer') with check (public.current_design_flow_role() = 'designer');
+drop policy if exists "sv can read tasks" on public.tasks;
+create policy "sv can read tasks" on public.tasks
+  for select to authenticated using (public.current_design_flow_role() = 'sv');
 drop policy if exists "designer can manage time logs" on public.time_logs;
 create policy "designer can manage time logs" on public.time_logs
   for all to authenticated using (public.current_design_flow_role() = 'designer') with check (public.current_design_flow_role() = 'designer');

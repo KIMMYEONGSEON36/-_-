@@ -170,6 +170,10 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
 .task-item:first-child { background: #fafbfc; color: #98a2ad; font-size: 10px; }
 .task-item:not(:first-child) { cursor: pointer; }
 .task-item:not(:first-child):hover { background: #fcfdff; }
+.progress-status { margin: 12px 0; }
+.sv-task-list { display: grid; gap: 8px; margin-top: 12px; }
+.sv-task-row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 7px; padding: 11px; border: 1px solid #edf0f3; border-radius: 8px; font-size: 11px; }
+.sv-task-row small { grid-column: 1 / -1; color: #8c97a2; }
 .select-status { height: 28px; padding: 0 7px; border: 1px solid #e3e7ed; border-radius: 6px; color: #566372; background: white; font-size: 10px; }
 .calendar-wrap { overflow-x: auto; }
 .calendar { min-width: 700px; display: grid; grid-template-columns: 58px repeat(5,1fr); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: white; }
@@ -215,12 +219,12 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
 .empty-price h2 { margin: 0 0 8px; font-size: 16px; }
 .empty-price p { margin: 0 0 18px; color: #8d98a3; font-size: 11px; line-height: 1.65; }
 .price-editor { margin-bottom: 16px; padding: 20px; }
-.price-form { display: grid; grid-template-columns: 1fr 1fr 1.35fr 1fr auto; gap: 10px; align-items: end; }
+.price-form { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; align-items: end; }
 .price-form .field label { white-space: nowrap; }
 .price-save { min-height: 39px; white-space: nowrap; }
 .price-table-wrap { padding: 19px; overflow: hidden; }
 .price-table { overflow-x: auto; }
-.price-head, .price-row { min-width: 720px; display: grid; grid-template-columns: 1.1fr .7fr 1.3fr 1fr .7fr .8fr; align-items: center; gap: 12px; padding: 12px 10px; border-bottom: 1px solid #eef0f3; font-size: 11px; }
+.price-head, .price-row { min-width: 960px; display: grid; grid-template-columns: 1.1fr .7fr 1.3fr 1fr .7fr 1fr .7fr .8fr; align-items: center; gap: 12px; padding: 12px 10px; border-bottom: 1px solid #eef0f3; font-size: 11px; }
 .price-head { color: #96a0ab; background: #fafbfc; font-size: 10px; }
 .price-row.inactive { color: #9aa3ad; background: #fbfbfc; }
 .price-actions { display: flex; gap: 10px; }
