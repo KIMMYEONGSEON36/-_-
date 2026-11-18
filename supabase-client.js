@@ -84,9 +84,40 @@
       return rows?.[0] || null;
     },
     async select(table, filters = {}, order = "") {
-      const params = { select: "*", ...filters };
+      const params = { select: filters.select || "*", ...filters };
+      delete params.select;
+      params.select = filters.select || "*";
       if (order) params.order = order;
       return api(`/rest/v1/${table}?${queryString(params)}`);
+    },
+    async backend(path, body = null, publicAccess = false) {
+      const session = publicAccess ? null : await getSession();
+      const response = await fetch(`/api/${path}`, {
+        method: body ? "POST" : "GET",
+        headers: { "Content-Type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "요청을 처리하지 못했습니다.");
+      return result;
+    },
+    async uploadFile(file, path, mimeType = file.type || "application/octet-stream") {
+      const session = await getSession();
+      if (!session?.access_token) throw new Error("파일을 올리려면 직원 로그인이 필요합니다.");
+      const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+      const response = await fetch(`${baseUrl}/storage/v1/object/design-flow-files/${encodedPath}`, {
+        method: "POST",
+        headers: { apikey: publishableKey, Authorization: `Bearer ${session.access_token}`, "Content-Type": mimeType, "x-upsert": "false" },
+        body: file
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || payload.error || "파일 업로드에 실패했습니다.");
+    },
+    async uploadPublicRequestFile(file, requestId, mimeType) {
+      const ticket = await this.backend("design-review", { action: "guest_upload", request_id: requestId, file_name: file.name, mime_type: mimeType, size_bytes: file.size }, true);
+      const response = await fetch(ticket.upload_url, { method: "PUT", headers: { "Content-Type": mimeType }, body: file });
+      if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(payload.message || "파일 업로드에 실패했습니다."); }
+      await this.backend("design-review", { action: "guest_register", request_id: requestId, object_path: ticket.object_path, file_name: file.name, mime_type: mimeType, size_bytes: file.size }, true);
     },
     async insert(table, value, isPublic = false) {
       return api(`/rest/v1/${table}`, { method: "POST", body: value, prefer: "return=minimal", public: isPublic });

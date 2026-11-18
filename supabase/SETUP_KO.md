@@ -28,7 +28,7 @@ select id, 'SV 담당자', 'sv'
 from auth.users where email = 'sv@example.com';
 ```
 
-디자이너는 요청·작업 관리와 단가표 편집을 할 수 있습니다. SV는 활성 단가를 조회하고 견적만 계산할 수 있습니다.
+디자이너는 요청·작업 관리와 단가표 편집을 할 수 있습니다. SV는 작업 요청, 요청 진행 조회, 활성 단가 견적 확인을 할 수 있습니다.
 
 ## 3. 앱 사용 경로
 
@@ -39,6 +39,17 @@ from auth.users where email = 'sv@example.com';
 - SV 업무: 작업 요청을 등록하고 **요청 진행상황**에서 상태와 작업 단계를 조회 (수정 권한 없음)
 
 견적은 단가 × 수량에 제주 추가 배송비(해당 지역 선택 시)를 더합니다. 기본 단가에는 부가세와 기본 배송비가 포함되며, 최소 수량보다 적게는 주문할 수 없습니다. 계산 결과는 저장하지 않고 화면에서 바로 확인·복사합니다.
+
+## 4. 첨부 파일과 시안 검토 링크
+
+기존 Supabase 프로젝트라면 SQL Editor에서 아래 마이그레이션을 순서대로 한 번 실행하세요.
+
+1. `supabase/migrations/20261118_sv_requests_quote_options.sql`
+2. `supabase/migrations/20261119_private_files_and_design_review.sql`
+
+Vercel 프로젝트의 **Settings → Environment Variables**에 `SUPABASE_SERVICE_ROLE_KEY`를 추가하고 Supabase **Settings → API Keys → Legacy API keys**의 `service_role` 값을 넣은 뒤 다시 배포하세요. 이 비밀 키는 Vercel 서버 함수에서만 사용되며, 앱 파일이나 GitHub에는 넣지 마세요.
+
+요청 작성 화면에서 참고 파일을 첨부할 수 있습니다. 디자이너는 요청 상세에서 시안 파일을 올리고 **시안 검토 링크 만들기**를 눌러 링크를 복사해 요청자에게 전달합니다. 요청자는 링크에서 파일을 내려받고 승인하거나 수정 의견을 보낼 수 있으며, 회신은 디자이너 대시보드 상단에 표시됩니다. 파일은 비공개 Storage에 저장되며 공유 링크의 파일 다운로드 주소는 1시간 동안 유효합니다.
 
 ## 키 관리
 

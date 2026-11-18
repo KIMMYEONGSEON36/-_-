@@ -1,7 +1,8 @@
 const today = new Date();
 const isoDay = (offset = 0) => { const d = new Date(today); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10); };
-let db = { requests: [], tasks: [], timeLogs: [], prices: [] };
-let route = new URLSearchParams(window.location.search).get("request") === "1" ? "request-form" : "dashboard";
+let db = { requests: [], tasks: [], timeLogs: [], prices: [], files: [], reviews: [] };
+const reviewToken = new URLSearchParams(window.location.search).get("review") || "";
+let route = reviewToken ? "public-review" : new URLSearchParams(window.location.search).get("request") === "1" ? "request-form" : "dashboard";
 let selectedRequest = null;
 let selectedTask = null;
 let form = {};
@@ -18,6 +19,10 @@ let savedRequestRows = new Map();
 let savedTaskRows = new Map();
 let priceEditId = null;
 let quoteSelection = { product: "", size: "", material: "", quantity: 1, deliveryArea: "기본 배송" };
+let publicReviewData = null;
+let publicReviewError = "";
+let reviewShareLink = "";
+let fileUploadError = "";
 
 function rowRequest(r) {
   return { id: r.id, title: r.title, type: r.type, brand: r.brand, store: r.store || null, requester: r.requester, contact: r.contact || null, created: r.created, deadline: r.deadline || null, status: r.status, priority: r.priority, purpose: r.purpose, details: r.details, product: r.product || null, quantity: r.quantity || null, use: r.use || null, reference: r.reference || null, ai: r.ai || null };
@@ -29,14 +34,18 @@ function mapTimeLog(l) { return { id: l.id, taskId: l.task_id, minutes: l.minute
 async function loadWorkspaceData() {
   const prices = await DesignFlowData.select("price_items", currentProfile.role === "sv" ? { is_active: "eq.true" } : {}, "product.asc,size.asc,material.asc");
   db.prices = prices || [];
-  const [requests, tasks, logs] = await Promise.all([
+  const [requests, tasks, logs, files, reviews] = await Promise.all([
     DesignFlowData.select("requests", {}, "created.desc"),
     DesignFlowData.select("tasks", {}, "due.asc"),
-    currentProfile.role === "designer" ? DesignFlowData.select("time_logs", {}, "date.desc") : Promise.resolve([])
+    currentProfile.role === "designer" ? DesignFlowData.select("time_logs", {}, "date.desc") : Promise.resolve([]),
+    DesignFlowData.select("design_files", {}, "created_at.desc"),
+    currentProfile.role === "designer" ? DesignFlowData.select("design_reviews", {}, "created_at.desc") : Promise.resolve([])
   ]);
   db.requests = (requests || []).map(mapRequest);
   db.tasks = (tasks || []).map(mapTask);
   db.timeLogs = (logs || []).map(mapTimeLog);
+  db.files = files || [];
+  db.reviews = reviews || [];
   savedRequestRows = new Map(db.requests.map(r => [r.id, JSON.stringify(rowRequest(r))]));
   savedTaskRows = new Map(db.tasks.map(t => [t.id, JSON.stringify(rowTask(t))]));
 }
@@ -72,13 +81,13 @@ function syncRequestStatusesFromTasks() {
     if (!linked.length) continue;
     if (linked.every(t => t.status === "완료")) r.status = "완료";
     else if (linked.every(t => t.status === "보류")) r.status = "보류";
-    else r.status = "작업 진행";
+    else if (r.status === "완료" || r.status === "보류") r.status = "작업 진행";
   }
 }
 function esc(value = "") { return String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function dateLabel(value) { if (!value) return "미정"; const d = new Date(`${value}T00:00:00`); return `${d.getMonth() + 1}월 ${d.getDate()}일`; }
 function dayDiff(value) { if (!value) return 999; return Math.ceil((new Date(`${value}T00:00:00`) - new Date(`${isoDay()}T00:00:00`)) / 86400000); }
-function statusClass(status) { return ({ "접수": "blue", "검토 중": "blue", "정보 요청": "amber", "분석 완료": "purple", "작업 진행": "blue", "완료": "green", "보류": "amber", "진행 중": "blue", "검토": "purple", "대기": "", "보류 중": "amber" })[status] || ""; }
+function statusClass(status) { return ({ "접수": "blue", "검토 중": "blue", "정보 요청": "amber", "분석 완료": "purple", "작업 진행": "blue", "시안 확인": "purple", "수정 요청": "amber", "디자인 승인": "green", "완료": "green", "보류": "amber", "진행 중": "blue", "검토": "purple", "대기": "", "보류 중": "amber" })[status] || ""; }
 function priorityClass(priority) { return ({ "긴급": "red", "높음": "amber", "보통": "blue", "낮음": "" })[priority] || ""; }
 function badge(text, cls = statusClass(text)) { return `<span class="badge ${cls}">${esc(text)}</span>`; }
 function notify(message) { const old = document.querySelector(".toast"); if (old) old.remove(); const node = document.createElement("div"); node.className = "toast"; node.textContent = message; document.body.append(node); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.remove(), 2600); }
@@ -147,7 +156,7 @@ function requestsPage() {
   let rows = [...db.requests].sort((a, b) => b.created.localeCompare(a.created));
   if (requestFilter !== "전체") rows = rows.filter(r => r.status === requestFilter);
   if (searchTerm) rows = rows.filter(r => `${r.title} ${r.brand} ${r.requester}`.toLowerCase().includes(searchTerm.toLowerCase()));
-  return `<section class="page">${head("REQUESTS", isSv ? "요청 진행상황" : "요청 관리", isSv ? `등록된 요청 ${db.requests.length}건의 상태와 진행 내용을 조회합니다.` : `총 ${db.requests.length}건의 디자인 요청을 관리합니다. 작업이 생성된 요청은 작업 상태에 따라 자동으로 완료 처리됩니다.`, `<button class="btn primary" data-go="request-form">＋　새 작업 요청</button>`)}<div class="toolbar"><div class="search"><input id="request-search" placeholder="요청명, 브랜드, 요청자로 검색" value="${esc(searchTerm)}" /></div><select class="select" id="request-filter">${["전체", "접수", "검토 중", "정보 요청", "분석 완료", "작업 진행", "완료", "보류"].map(v => `<option ${requestFilter === v ? "selected" : ""}>${v}</option>`).join("")}</select><button class="btn">필터　⌄</button></div><div class="panel request-list"><div class="list-head"><span>요청 내용</span><span>브랜드 / 요청자</span><span>접수일</span><span>희망 완료일</span><span>상태</span></div>${rows.map(r => `<div class="list-item" data-request="${r.id}"><div><div class="row-title">${esc(r.title)}</div><div class="row-meta"><span>${esc(r.type)}</span>${badge(r.priority, priorityClass(r.priority))}</div><div class="list-mobile-meta">${esc(r.brand)} · ${dateLabel(r.created)}</div></div><div>${esc(r.brand)}<div class="row-meta">${esc(r.requester)}</div></div><div>${dateLabel(r.created)}</div><div>${dateLabel(r.deadline)}</div><div>${badge(r.status)}</div></div>`).join("") || `<div class="empty">조건에 맞는 요청이 없습니다.</div>`}</div></section>`;
+  return `<section class="page">${head("REQUESTS", isSv ? "요청 진행상황" : "요청 관리", isSv ? `등록된 요청 ${db.requests.length}건의 상태와 진행 내용을 조회합니다.` : `총 ${db.requests.length}건의 디자인 요청을 관리합니다. 작업이 생성된 요청은 작업 상태에 따라 자동으로 완료 처리됩니다.`, `<button class="btn primary" data-go="request-form">＋　새 작업 요청</button>`)}<div class="toolbar"><div class="search"><input id="request-search" placeholder="요청명, 브랜드, 요청자로 검색" value="${esc(searchTerm)}" /></div><select class="select" id="request-filter">${["전체", "접수", "검토 중", "정보 요청", "분석 완료", "시안 확인", "수정 요청", "디자인 승인", "작업 진행", "완료", "보류"].map(v => `<option ${requestFilter === v ? "selected" : ""}>${v}</option>`).join("")}</select><button class="btn">필터　⌄</button></div><div class="panel request-list"><div class="list-head"><span>요청 내용</span><span>브랜드 / 요청자</span><span>접수일</span><span>희망 완료일</span><span>상태</span></div>${rows.map(r => `<div class="list-item" data-request="${r.id}"><div><div class="row-title">${esc(r.title)}</div><div class="row-meta"><span>${esc(r.type)}</span>${badge(r.priority, priorityClass(r.priority))}</div><div class="list-mobile-meta">${esc(r.brand)} · ${dateLabel(r.created)}</div></div><div>${esc(r.brand)}<div class="row-meta">${esc(r.requester)}</div></div><div>${dateLabel(r.created)}</div><div>${dateLabel(r.deadline)}</div><div>${badge(r.status)}</div></div>`).join("") || `<div class="empty">조건에 맞는 요청이 없습니다.</div>`}</div></section>`;
 }
 
 function requestDetail() {
@@ -158,18 +167,44 @@ function requestDetail() {
     return `<section class="page">${head("REQUEST STATUS", r.title, `${r.id}　·　${esc(r.brand)}　·　${dateLabel(r.created)} 접수`, `<button class="btn" data-go="requests">← 요청 목록</button>`)}<div class="detail-grid"><div class="panel"><div class="detail-section"><div class="section-label">요청 내용</div><h2 class="detail-title">${esc(r.title)}</h2><div class="detail-copy">${esc(r.details || "요청 상세 내용이 없습니다.")}</div></div><div class="detail-section"><div class="section-label">요청 정보</div><div class="info-grid"><div><div class="info-label">요청 유형</div><div class="info-value">${esc(r.type)}</div></div><div><div class="info-label">요청자</div><div class="info-value">${esc(r.requester)}</div></div><div><div class="info-label">브랜드 / 매장</div><div class="info-value">${esc(r.brand)}${r.store ? ` / ${esc(r.store)}` : ""}</div></div><div><div class="info-label">희망 완료일</div><div class="info-value">${dateLabel(r.deadline)}</div></div><div><div class="info-label">제작물</div><div class="info-value">${esc(r.product || "미정")}</div></div><div><div class="info-label">수량</div><div class="info-value">${esc(r.quantity || "미정")}</div></div><div><div class="info-label">현재 상태</div><div class="info-value">${badge(r.status)}</div></div></div></div></div><aside class="panel"><div class="section-label">진행 상황</div><div class="progress-status">${badge(r.status)}</div>${tasks.length ? `<div class="sv-task-list">${tasks.map(t => `<div class="sv-task-row"><strong>${esc(t.step || t.name)}</strong>${badge(t.status)}${t.due ? `<small>예정 ${dateLabel(t.due)}</small>` : ""}</div>`).join("")}</div>` : `<div class="empty">디자인 담당자가 요청을 검토 중입니다. 작업 일정이 등록되면 여기에 표시됩니다.</div>`}<div class="quote-disclaimer">진행 내용은 조회 전용입니다. 변경이나 문의는 디자인 담당자에게 연락해주세요.</div></aside></div></section>`;
   }
   const steps = r.ai?.steps || [];
-  return `<section class="page">${head("REQUEST DETAIL", r.title, `${r.id}　·　${esc(r.brand)}　·　${dateLabel(r.created)} 접수`, `<button class="btn" data-go="requests">← 요청 목록</button>`)}<div class="detail-grid"><div class="panel"><div class="detail-section"><div class="section-label">요청 내용</div><h2 class="detail-title">${esc(r.title)}</h2><div class="detail-copy">${esc(r.details || "요청 상세 내용이 없습니다.")}</div></div><div class="detail-section"><div class="section-label">요청 정보</div><div class="info-grid"><div><div class="info-label">요청 유형</div><div class="info-value">${esc(r.type)}</div></div><div><div class="info-label">요청자</div><div class="info-value">${esc(r.requester)}</div></div><div><div class="info-label">브랜드 / 매장</div><div class="info-value">${esc(r.brand)}</div></div><div><div class="info-label">희망 완료일</div><div class="info-value">${dateLabel(r.deadline)}</div></div><div><div class="info-label">제작물</div><div class="info-value">${esc(r.product || "미정")}</div></div><div><div class="info-label">수량</div><div class="info-value">${esc(r.quantity || "미정")}</div></div><div><div class="info-label">사용 장소</div><div class="info-value">${esc(r.use || "미정")}</div></div><div><div class="info-label">현재 상태</div><div class="info-value">${badge(r.status)}</div></div></div></div><div class="detail-section"><div class="section-label">다음 단계</div><div class="checklist"><label class="check-row"><input type="checkbox" ${r.status !== "접수" ? "checked" : ""} /> 요청 내용 확인</label><label class="check-row"><input type="checkbox" ${["분석 완료", "작업 진행", "완료"].includes(r.status) ? "checked" : ""} /> 분석 제안 검토</label><label class="check-row"><input type="checkbox" ${["작업 진행", "완료"].includes(r.status) ? "checked" : ""} /> 작업 목록 생성</label></div></div></div><aside class="panel"><div class="ai-box"><div class="ai-heading"><div><strong>AI 분석 제안</strong><div class="ai-caption">AI 연결 전입니다. 제안을 직접 입력할 수 있습니다.</div></div><span class="badge purple">제안</span></div><div class="field"><label>요청 요약</label><textarea class="editable" id="ai-summary" rows="3">${esc(r.ai?.summary || "요청 내용을 확인한 뒤 요약을 작성해주세요.")}</textarea></div><div class="field" style="margin-top:12px"><label>추가 확인이 필요한 정보</label><textarea class="editable" id="ai-missing" rows="3">${esc((r.ai?.missing || []).join("\n"))}</textarea></div><div class="section-label" style="margin:16px 0 7px">작업 단계와 예상 시간 (분)</div><div id="steps-editor">${steps.map((s, i) => `<div class="step-edit"><input data-step-name="${i}" value="${esc(s.name)}" aria-label="작업 단계명" /><input data-step-minutes="${i}" type="number" min="0" value="${Number(s.minutes) || 0}" aria-label="예상 시간(분)" /><button class="remove-step" data-remove-step="${i}" aria-label="단계 삭제">×</button></div>`).join("")}</div><button class="btn small" style="margin-top:8px" id="add-step">＋ 단계 추가</button><div class="ai-actions"><button class="btn small" id="save-analysis">제안 저장</button><button class="btn primary small" id="approve-analysis">제안 승인 및 작업 생성</button></div></div><div class="detail-section"><div class="section-label">상태 변경</div><select class="select" id="request-status" style="width:100%">${["접수", "검토 중", "정보 요청", "분석 완료", "작업 진행", "완료", "보류", "취소"].map(s => `<option ${r.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></div></aside></div></section>`;
+  return `<section class="page">${head("REQUEST DETAIL", r.title, `${r.id}　·　${esc(r.brand)}　·　${dateLabel(r.created)} 접수`, `<button class="btn" data-go="requests">← 요청 목록</button>`)}<div class="detail-grid"><div class="panel"><div class="detail-section"><div class="section-label">요청 내용</div><h2 class="detail-title">${esc(r.title)}</h2><div class="detail-copy">${esc(r.details || "요청 상세 내용이 없습니다.")}</div></div><div class="detail-section"><div class="section-label">요청 정보</div><div class="info-grid"><div><div class="info-label">요청 유형</div><div class="info-value">${esc(r.type)}</div></div><div><div class="info-label">요청자</div><div class="info-value">${esc(r.requester)}</div></div><div><div class="info-label">브랜드 / 매장</div><div class="info-value">${esc(r.brand)}</div></div><div><div class="info-label">희망 완료일</div><div class="info-value">${dateLabel(r.deadline)}</div></div><div><div class="info-label">제작물</div><div class="info-value">${esc(r.product || "미정")}</div></div><div><div class="info-label">수량</div><div class="info-value">${esc(r.quantity || "미정")}</div></div><div><div class="info-label">사용 장소</div><div class="info-value">${esc(r.use || "미정")}</div></div><div><div class="info-label">현재 상태</div><div class="info-value">${badge(r.status)}</div></div></div></div><div class="detail-section"><div class="section-label">다음 단계</div><div class="checklist"><label class="check-row"><input type="checkbox" ${r.status !== "접수" ? "checked" : ""} /> 요청 내용 확인</label><label class="check-row"><input type="checkbox" ${["분석 완료", "작업 진행", "완료"].includes(r.status) ? "checked" : ""} /> 분석 제안 검토</label><label class="check-row"><input type="checkbox" ${["작업 진행", "완료"].includes(r.status) ? "checked" : ""} /> 작업 목록 생성</label></div></div></div><aside class="panel"><div class="ai-box"><div class="ai-heading"><div><strong>AI 분석 제안</strong><div class="ai-caption">AI 연결 전입니다. 제안을 직접 입력할 수 있습니다.</div></div><span class="badge purple">제안</span></div><div class="field"><label>요청 요약</label><textarea class="editable" id="ai-summary" rows="3">${esc(r.ai?.summary || "요청 내용을 확인한 뒤 요약을 작성해주세요.")}</textarea></div><div class="field" style="margin-top:12px"><label>추가 확인이 필요한 정보</label><textarea class="editable" id="ai-missing" rows="3">${esc((r.ai?.missing || []).join("\n"))}</textarea></div><div class="section-label" style="margin:16px 0 7px">작업 단계와 예상 시간 (분)</div><div id="steps-editor">${steps.map((s, i) => `<div class="step-edit"><input data-step-name="${i}" value="${esc(s.name)}" aria-label="작업 단계명" /><input data-step-minutes="${i}" type="number" min="0" value="${Number(s.minutes) || 0}" aria-label="예상 시간(분)" /><button class="remove-step" data-remove-step="${i}" aria-label="단계 삭제">×</button></div>`).join("")}</div><button class="btn small" style="margin-top:8px" id="add-step">＋ 단계 추가</button><div class="ai-actions"><button class="btn small" id="save-analysis">제안 저장</button><button class="btn primary small" id="approve-analysis">제안 승인 및 작업 생성</button></div></div><div class="detail-section"><div class="section-label">상태 변경</div><select class="select" id="request-status" style="width:100%">${["접수", "검토 중", "정보 요청", "분석 완료", "시안 확인", "수정 요청", "디자인 승인", "작업 진행", "완료", "보류", "취소"].map(s => `<option ${r.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></div></aside></div></section>`;
+}
+
+function requestFilesPanel(request) {
+  if (!request) return "";
+  const files = db.files.filter(file => file.request_id === request.id).sort((a,b) => String(a.created_at).localeCompare(String(b.created_at)));
+  const isDesigner = currentProfile?.role === "designer";
+  const kinds = isDesigner ? [["request_attachment", "요청 참고자료"], ["draft", "시안"], ["final", "최종 파일"]] : [["request_attachment", "요청 참고자료"]];
+  return `<div class="panel request-files-panel"><div class="panel-head"><div><div class="panel-title">요청 파일과 시안</div><div class="panel-sub">비공개 파일로 보관되며 요청 권한이 있는 사람만 열 수 있습니다.</div></div></div>${files.length ? `<div class="attached-file-list">${files.map(file => { const review = db.reviews.find(item => item.id === file.review_id); return `<div class="attached-file"><div><strong>${esc(file.file_name)}</strong><span>${file.kind === "request_attachment" ? "요청 참고자료" : file.kind === "draft" ? `시안 ${file.version || ""}` : "최종 파일"}${review ? ` · ${review.status === "pending" ? "회신 대기" : review.status === "approved" ? "승인" : review.status === "revision_requested" ? "수정 요청" : "새 시안 등록됨"}` : ""}${file.description ? ` · ${esc(file.description)}` : ""}</span></div><button class="btn small" data-file-download="${file.id}">다운로드</button></div>`; }).join("")}</div>` : `<div class="empty">아직 등록된 파일이 없습니다.</div>`}${currentProfile?.role === "designer" ? `<div class="share-link-area">${reviewShareLink ? `<label>요청자 공유 링크</label><div class="share-link-row"><input id="review-share-url" readonly value="${esc(reviewShareLink)}"/><button class="btn small" id="copy-review-link">링크 복사</button></div>` : ""}<button class="btn ${files.some(file => file.kind === "draft" && !file.review_id) ? "primary" : ""}" id="create-review-link" ${files.some(file => file.kind === "draft" && !file.review_id) ? "" : "disabled"}>시안 검토 링크 만들기</button><div class="helper">먼저 시안 파일을 올린 뒤 링크를 만들어 요청자에게 전달하세요. 요청자는 링크에서 승인 또는 수정 요청을 할 수 있습니다.</div></div>` : ""}<form id="detail-file-form" class="detail-file-form"><div class="field"><label for="detail-file-kind">파일 종류</label><select id="detail-file-kind">${kinds.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label for="detail-file-input">파일 선택</label><input id="detail-file-input" type="file" multiple accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf,.ai,.psd" /><div class="helper">이미지·PDF·AI·PSD, 파일당 최대 20MB</div></div><div class="field"><label for="detail-file-description">설명 (선택)</label><input id="detail-file-description" maxlength="300" placeholder="예: 문구 수정한 2차 시안" /></div><button class="btn primary" type="submit">파일 올리기</button></form></div>`;
+}
+
+function reviewDashboardPanel() {
+  const reviews = [...(db.reviews || [])].sort((a,b) => {
+    const priority = item => item.status === "revision_requested" || item.status === "approved" ? 0 : 1;
+    return priority(a) - priority(b) || String(b.responded_at || b.created_at).localeCompare(String(a.responded_at || a.created_at));
+  }).slice(0, 6);
+  return `<div class="panel review-inbox"><div class="panel-head"><div><div class="panel-title">시안 승인 · 수정 요청</div><div class="panel-sub">요청자가 공유 링크에서 남긴 최신 회신을 먼저 확인하세요.</div></div><span class="badge blue">${reviews.filter(item => item.status === "revision_requested").length}건 수정 요청</span></div>${reviews.length ? reviews.map(item => { const request = db.requests.find(r => r.id === item.request_id); const label = item.status === "approved" ? "승인" : item.status === "revision_requested" ? "수정 요청" : item.status === "superseded" ? "새 시안 등록됨" : "회신 대기"; return `<button class="review-inbox-row" data-review-request="${esc(item.request_id)}"><span class="review-inbox-status ${item.status}">${label}</span><strong>${esc(request?.title || item.request_id)} · 시안 ${item.version}차</strong><span>${esc(item.feedback || (item.status === "pending" ? "요청자 확인을 기다리고 있어요." : "요청 상세에서 다음 작업을 확인하세요."))}</span><small>${new Date(item.responded_at || item.created_at).toLocaleString("ko-KR")}</small></button>`; }).join("") : `<div class="empty">아직 시안 회신이 없습니다.</div>`}</div>`;
+}
+
+function publicReviewPage() {
+  if (publicReviewError) return `<section class="review-public-page"><div class="panel review-public-card"><div class="brand-mark">D</div><h1>시안 링크를 열 수 없습니다</h1><p>${esc(publicReviewError)}</p></div></section>`;
+  if (!publicReviewData) return `<section class="review-public-page"><div class="panel review-public-card"><div class="brand-mark">D</div><h1>시안을 불러오는 중입니다</h1><p>잠시만 기다려주세요.</p></div></section>`;
+  const { request, review, files } = publicReviewData;
+  const responded = review.status !== "pending";
+  return `<section class="review-public-page"><div class="panel review-public-card"><div class="brand"><span class="brand-mark">D</span><span class="brand-name">Design Flow</span></div><div class="eyebrow">DESIGN REVIEW · ${review.version}차 시안</div><h1>${esc(request.title)}</h1><p class="subhead">${esc(request.brand)}${request.store ? ` · ${esc(request.store)}` : ""} · 요청자 ${esc(request.requester)}</p><div class="review-request-copy"><strong>요청 내용</strong><p>${esc(request.details || request.purpose || "요청 내용을 확인해주세요.")}</p></div><div class="review-assets">${files.map(file => `<article class="review-asset">${file.mime_type.startsWith("image/") ? `<a href="${esc(file.preview_url)}" target="_blank" rel="noopener"><img src="${esc(file.preview_url)}" alt="시안 ${review.version}차" /></a>` : `<div class="review-file-icon">PDF</div>`}<div class="review-asset-info"><strong>${esc(file.file_name)}</strong>${file.description ? `<span>${esc(file.description)}</span>` : ""}<a class="btn small" href="${esc(file.download_url)}">시안 다운로드</a></div></article>`).join("")}</div>${responded ? `<div class="review-response-done"><strong>${review.status === "approved" ? "시안을 승인하셨습니다" : review.status === "superseded" ? "새 시안이 등록되어 이 링크는 이전 버전입니다" : "수정 요청을 전달했습니다"}</strong>${review.feedback ? `<p>${esc(review.feedback)}</p>` : ""}<span>디자인 담당자가 회신을 확인합니다.</span></div>` : `<div class="review-response-form"><label for="review-feedback">수정 의견 (수정 요청 시 필수)</label><textarea id="review-feedback" rows="4" maxlength="2000" placeholder="수정이 필요한 부분을 구체적으로 적어주세요."></textarea><div class="review-response-error" id="review-response-error"></div><div class="review-response-actions"><button class="btn" id="request-revision">수정 요청</button><button class="btn primary" id="approve-design">시안 승인</button></div></div>`}<p class="review-public-foot">시안 검토 링크는 파일을 볼 수 있는 권한이 있는 공유 링크입니다. 링크를 받은 분만 열어주세요.</p></div></section>`;
 }
 
 const typeOptions = ["신규 제작", "수정 요청", "재주문", "상담·기획"];
 function formPage() {
   const isReview = formStep === 2;
+  const attachmentPicker = `<div class="field full file-picker"><label for="request-attachments">요청 참고 파일</label><input id="request-attachments" type="file" multiple accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf,.ai,.psd" /><div class="helper">이미지, PDF, AI, PSD 파일을 첨부할 수 있어요. 파일당 최대 20MB, 요청당 최대 10개입니다.</div><div id="request-attachment-names" class="file-name-list">${(form.attachments || []).map(file => esc(file.name)).join(" · ")}</div></div>`;
+  const attachmentReview = isReview && form.attachments?.length ? `<div class="review-row"><span>첨부 파일</span><span>${form.attachments.map(file => esc(file.name)).join("<br>")}</span></div>` : "";
   const stepsHTML = `<div class="steps-indicator">${[0,1,2].map(i => `<div class="step-seg ${i <= formStep ? "done" : ""}"></div>`).join("")}</div>`;
   let inside = "";
   if (formStep === 0) inside = `<h2 class="form-step-title">어떤 디자인이 필요하신가요?</h2><p class="form-step-desc">요청 유형에 맞춰 필요한 내용만 여쭤볼게요.</p><div class="choice-grid">${typeOptions.map(t => `<button class="choice ${form.type === t ? "selected" : ""}" data-type="${t}"><span class="choice-mark">✓</span><span>${t}</span></button>`).join("")}</div><div class="field-grid" style="margin-top:20px"><div class="field"><label>브랜드 <span class="required">*</span></label><select id="f-brand"><option value="">선택해주세요</option>${["미카도스시", "탄광맥주", "goc커피", "코타코", "우동담아", "기타"].map(x => `<option ${form.brand === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div class="field"><label>매장명</label><input id="f-store" value="${esc(form.store || "")}" placeholder="예: 강남점" /></div><div class="field"><label>요청자 이름 <span class="required">*</span></label><input id="f-requester" value="${esc(form.requester || "")}" placeholder="이름을 입력해주세요" /></div><div class="field"><label>연락처</label><input id="f-contact" value="${esc(form.contact || "")}" placeholder="연락 가능한 번호 (선택)" /></div></div>`;
-  else if (formStep === 1) inside = `<h2 class="form-step-title">요청 내용을 알려주세요</h2><p class="form-step-desc">정확히 모르시는 항목은 비워두거나 ‘미정’이라고 적어도 괜찮아요.</p><div class="field-grid"><div class="field"><label>요청 제목 <span class="required">*</span></label><input id="f-title" value="${esc(form.title || "")}" placeholder="예: 봄 신메뉴 포스터 제작" /></div><div class="field"><label>희망 완료일</label><input id="f-deadline" type="date" value="${esc(form.deadline || "")}" /></div>${conditionalFields()}<div class="field full"><label>요청 목적 <span class="required">*</span></label><input id="f-purpose" value="${esc(form.purpose || "")}" placeholder="이 디자인이 필요한 이유를 알려주세요" /></div><div class="field full"><label>상세 내용 <span class="required">*</span></label><textarea id="f-details" placeholder="전달하고 싶은 내용이나 조건을 적어주세요">${esc(form.details || "")}</textarea></div><div class="field full"><label>참고 자료 링크</label><input id="f-reference" value="${esc(form.reference || "")}" placeholder="이미지나 문서 링크 (선택)" /><div class="helper">파일 업로드는 아직 지원하지 않습니다. 제출 내용은 담당자에게 공유됩니다.</div></div></div>`;
+  else if (formStep === 1) inside = `<h2 class="form-step-title">요청 내용을 알려주세요</h2><p class="form-step-desc">정확히 모르시는 항목은 비워두거나 ‘미정’이라고 적어도 괜찮아요.</p><div class="field-grid"><div class="field"><label>요청 제목 <span class="required">*</span></label><input id="f-title" value="${esc(form.title || "")}" placeholder="예: 봄 신메뉴 포스터 제작" /></div><div class="field"><label>희망 완료일</label><input id="f-deadline" type="date" value="${esc(form.deadline || "")}" /></div>${conditionalFields()}<div class="field full"><label>요청 목적 <span class="required">*</span></label><input id="f-purpose" value="${esc(form.purpose || "")}" placeholder="이 디자인이 필요한 이유를 알려주세요" /></div><div class="field full"><label>상세 내용 <span class="required">*</span></label><textarea id="f-details" placeholder="전달하고 싶은 내용이나 조건을 적어주세요">${esc(form.details || "")}</textarea></div><div class="field full"><label>참고 자료 링크</label><input id="f-reference" value="${esc(form.reference || "")}" placeholder="이미지나 문서 링크 (선택)" /><div class="helper">자료 파일은 위의 ‘요청 참고 파일’에서 함께 첨부할 수 있습니다. 제출 내용은 담당자에게 공유됩니다.</div></div></div>`;
   else inside = `<h2 class="form-step-title">입력 내용을 확인해주세요</h2><p class="form-step-desc">제출하면 디자인 담당자가 내용을 확인합니다. 희망 완료일은 확정 일정이 아닙니다.</p><div class="review-list">${[["요청 유형",form.type],["브랜드",form.brand],["매장명",form.store],["요청자",form.requester],["제목",form.title],["희망 완료일",form.deadline ? dateLabel(form.deadline) : "미정"],["제작물",form.product],["사용 장소",form.use],["수량",form.quantity],["요청 목적",form.purpose],["상세 내용",form.details],["참고 링크",form.reference]].filter(row => row[1]).map(([a,b]) => `<div class="review-row"><span>${a}</span><span>${esc(b)}</span></div>`).join("")}</div>`;
-  return `<section class="page"><div class="form-shell">${head("REQUEST PORTAL", "디자인 요청 접수", "필요한 내용을 차근차근 알려주세요. 보통 2분 정도 걸려요.")}<div class="panel form-card">${stepsHTML}${inside}<div class="form-error" id="form-error"></div><div class="form-footer">${formStep > 0 ? `<button class="btn" id="form-back">← 이전</button>` : `<span></span>`}<button class="btn primary" id="form-next">${isReview ? "요청 제출하기　→" : "다음　→"}</button></div></div><div class="footer-note">제출한 요청은 디자인 담당자에게 공유됩니다.</div></div></section>`;
+  return `<section class="page"><div class="form-shell">${head("REQUEST PORTAL", "디자인 요청 접수", "필요한 내용을 차근차근 알려주세요. 보통 2분 정도 걸려요.")}<div class="panel form-card">${stepsHTML}${inside}${formStep === 1 ? attachmentPicker : ""}${attachmentReview}<div class="form-error" id="form-error"></div><div class="form-footer">${formStep > 0 ? `<button class="btn" id="form-back">← 이전</button>` : `<span></span>`}<button class="btn primary" id="form-next">${isReview ? "요청 제출하기　→" : "다음　→"}</button></div></div><div class="footer-note">제출한 요청은 디자인 담당자에게 공유됩니다.</div></div></section>`;
 }
 function conditionalFields() {
   const type = form.type;
@@ -181,7 +216,7 @@ function conditionalFields() {
 function successPage() {
   const returnRoute = currentProfile?.role === "sv" ? "requests" : "dashboard";
   const returnLabel = currentProfile?.role === "sv" ? "요청 진행상황 보기" : "워크스페이스로 돌아가기";
-  return `<section class="page"><div class="form-shell"><div class="panel success-state"><div class="success-icon">✓</div><h2>요청이 접수되었어요</h2><p>디자인 담당자가 요청 내용을 확인할 예정입니다.<br>희망 완료일은 검토 후 안내드리며, 확정된 일정은 아닙니다.</p><div class="request-number">${esc(selectedRequest || "DF-00000")}</div><div><button class="btn primary" data-go="${returnRoute}">${returnLabel}</button></div></div></div></section>`;
+  return `<section class="page"><div class="form-shell"><div class="panel success-state"><div class="success-icon">✓</div><h2>요청이 접수되었어요</h2><p>디자인 담당자가 요청 내용을 확인할 예정입니다.<br>희망 완료일은 검토 후 안내드리며, 확정된 일정은 아닙니다.</p>${fileUploadError ? `<div class="workspace-alert">${esc(fileUploadError)}</div>` : ""}<div class="request-number">${esc(selectedRequest || "DF-00000")}</div><div><button class="btn primary" data-go="${returnRoute}">${returnLabel}</button></div></div></div></section>`;
 }
 
 function tasksPage() {
@@ -206,18 +241,29 @@ function calendarPage() {
 
 function render() {
   const app = document.getElementById("app");
-  if (!currentProfile && !["request-form", "request-success"].includes(route)) {
+  if (!currentProfile && !["request-form", "request-success", "public-review"].includes(route)) {
     app.innerHTML = bootError.includes("schema") ? startupPage() : loginPage();
     bindEvents();
     return;
   }
   if (currentProfile?.role === "sv" && !["quote", "requests", "request-detail", "request-form", "request-success"].includes(route)) route = "quote";
-  let content = route === "dashboard" ? dashboard() : route === "requests" ? requestsPage() : route === "request-detail" ? requestDetail() : route === "request-form" ? formPage() : route === "request-success" ? successPage() : route === "tasks" ? tasksPage() : route === "task-detail" ? taskDetail() : route === "calendar" ? calendarPage() : route === "prices" ? pricesPage() : route === "quote" ? quotePage() : dashboard();
-  app.innerHTML = currentProfile ? layout(content) : publicLayout(content);
+  let content = route === "public-review" ? publicReviewPage() : route === "dashboard" ? dashboard() : route === "requests" ? requestsPage() : route === "request-detail" ? requestDetail() : route === "request-form" ? formPage() : route === "request-success" ? successPage() : route === "tasks" ? tasksPage() : route === "task-detail" ? taskDetail() : route === "calendar" ? calendarPage() : route === "prices" ? pricesPage() : route === "quote" ? quotePage() : dashboard();
+  if (route === "request-detail" && currentProfile) {
+    const request = db.requests.find(item => item.id === selectedRequest);
+    content = content.replace("</section>", `${requestFilesPanel(request)}</section>`);
+  }
+  if (route === "dashboard" && currentProfile?.role === "designer") content = content.replace('<div class="metrics">', `${reviewDashboardPanel()}<div class="metrics">`);
+  app.innerHTML = currentProfile && route !== "public-review" ? layout(content) : publicLayout(content);
   bindEvents();
 }
 async function initializeApp() {
   if (!window.DesignFlowData?.ready) { bootError = "Supabase schema is not configured."; render(); return; }
+  if (route === "public-review") {
+    try { publicReviewData = await DesignFlowData.backend(`design-review?token=${encodeURIComponent(reviewToken)}`, null, true); }
+    catch (error) { publicReviewError = error.message; }
+    render();
+    return;
+  }
   try {
     const session = await DesignFlowData.getSession();
     currentUser = session?.user || null;
@@ -252,15 +298,18 @@ function validateStep() {
   if (formStep === 1) {
     setFormFields();
     if (!form.title || !form.purpose || !form.details) return error.textContent = "제목, 요청 목적, 상세 내용을 입력해주세요.", false;
+    if ((form.attachments || []).length > 10) return error.textContent = "첨부 파일은 요청당 최대 10개까지 가능합니다.", false;
+    if ((form.attachments || []).some(file => !getAllowedFileType(file) || file.size > 20 * 1024 * 1024)) return error.textContent = "지원되는 파일 형식인지 확인하고, 파일당 20MB 이하로 첨부해주세요.", false;
   }
   return true;
 }
 function bindEvents() {
   document.querySelectorAll("[data-go]").forEach(el => el.addEventListener("click", () => { if (el.dataset.go === "request-form") { form = {}; formStep = 0; } if (el.dataset.go === "login") route = "login"; go(el.dataset.go); }));
-  document.querySelectorAll("[data-request]").forEach(el => el.addEventListener("click", () => go("request-detail", el.dataset.request)));
+  document.querySelectorAll("[data-request]").forEach(el => el.addEventListener("click", () => { reviewShareLink = ""; go("request-detail", el.dataset.request); }));
+  document.querySelectorAll("[data-review-request]").forEach(el => el.addEventListener("click", () => { reviewShareLink = ""; go("request-detail", el.dataset.reviewRequest); }));
   document.querySelectorAll("[data-task]:not([data-task-status])").forEach(el => el.addEventListener("click", e => { if (e.target.closest("select")) return; go("task-detail", el.dataset.task); }));
   const menu = document.getElementById("menu-toggle"); if (menu) menu.addEventListener("click", () => document.getElementById("sidebar").classList.toggle("open"));
-  const logout = document.getElementById("sign-out"); if (logout) logout.addEventListener("click", async () => { await DesignFlowData.signOut(); currentUser = null; currentProfile = null; db = { requests: [], tasks: [], timeLogs: [], prices: [] }; route = "login"; render(); });
+  const logout = document.getElementById("sign-out"); if (logout) logout.addEventListener("click", async () => { await DesignFlowData.signOut(); currentUser = null; currentProfile = null; db = { requests: [], tasks: [], timeLogs: [], prices: [], files: [], reviews: [] }; route = "login"; render(); });
   const loginForm = document.getElementById("login-form"); if (loginForm) loginForm.addEventListener("submit", async e => {
     e.preventDefault(); const error = document.getElementById("login-error"); const button = loginForm.querySelector("button[type=submit]"); button.disabled = true; error.textContent = "로그인 중…";
     try {
@@ -280,6 +329,13 @@ function bindEvents() {
   document.querySelectorAll("[data-type]").forEach(el => el.addEventListener("click", () => { form.type = el.dataset.type; render(); }));
   const back = document.getElementById("form-back"); if (back) back.addEventListener("click", () => { setFormFields(); formStep--; render(); });
   const next = document.getElementById("form-next"); if (next) next.addEventListener("click", async () => { if (!validateStep()) return; if (formStep < 2) { formStep++; render(); } else await submitRequest(); });
+  const fileForm = document.getElementById("detail-file-form"); if (fileForm) fileForm.addEventListener("submit", uploadDetailFiles);
+  document.querySelectorAll("[data-file-download]").forEach(el => el.addEventListener("click", async () => { try { const result = await DesignFlowData.backend("design-review", { action: "file_link", file_id: el.dataset.fileDownload }); window.open(result.url, "_blank", "noopener"); } catch (error) { notify(`파일을 열지 못했어요: ${error.message}`); } }));
+  const createReviewLink = document.getElementById("create-review-link"); if (createReviewLink) createReviewLink.addEventListener("click", async () => { createReviewLink.disabled = true; try { const result = await DesignFlowData.backend("design-review", { action: "create_link", request_id: selectedRequest }); reviewShareLink = result.url; db.files = await DesignFlowData.select("design_files", {}, "created_at.desc"); db.reviews = await DesignFlowData.select("design_reviews", {}, "created_at.desc"); notify(`${result.version}차 시안 검토 링크를 만들었어요.`); render(); } catch (error) { createReviewLink.disabled = false; notify(`링크를 만들지 못했어요: ${error.message}`); } });
+  const copyReviewLink = document.getElementById("copy-review-link"); if (copyReviewLink) copyReviewLink.addEventListener("click", async () => { try { await navigator.clipboard.writeText(reviewShareLink); notify("요청자 공유 링크를 복사했어요."); } catch { notify("링크를 복사하지 못했습니다."); } });
+  const requestAttachments = document.getElementById("request-attachments"); if (requestAttachments) requestAttachments.addEventListener("change", e => { form.attachments = [...e.target.files]; const names = document.getElementById("request-attachment-names"); if (names) names.textContent = form.attachments.map(file => file.name).join(" · "); });
+  const approveDesign = document.getElementById("approve-design"); if (approveDesign) approveDesign.addEventListener("click", () => sendReviewResponse("approved"));
+  const requestRevision = document.getElementById("request-revision"); if (requestRevision) requestRevision.addEventListener("click", () => sendReviewResponse("revision_requested"));
   const addStep = document.getElementById("add-step"); if (addStep) addStep.addEventListener("click", async () => { const r = db.requests.find(x => x.id === selectedRequest); await saveAnalysis(false); r.ai.steps.push({ name: "새 작업 단계", minutes: 30 }); await saveData(); render(); });
   document.querySelectorAll("[data-remove-step]").forEach(el => el.addEventListener("click", async () => { const r = db.requests.find(x => x.id === selectedRequest); await saveAnalysis(false); r.ai.steps.splice(Number(el.dataset.removeStep), 1); await saveData(); render(); }));
   const save = document.getElementById("save-analysis"); if (save) save.addEventListener("click", async () => { await saveAnalysis(false); notify("분석 제안을 저장했어요."); });
@@ -292,14 +348,79 @@ function bindEvents() {
   bindPriceEvents();
 }
 async function submitRequest() {
-  const id = `DF-${Date.now().toString(36).toUpperCase()}`;
+  const id = `DF-${crypto.randomUUID()}`;
   const request = { id, title: form.title, type: form.type, brand: form.brand, store: form.store || null, requester: form.requester, contact: form.contact || null, created: isoDay(), deadline: form.deadline || null, status: "접수", priority: "보통", purpose: form.purpose, details: form.details, product: form.product || "", quantity: form.quantity || "", use: form.use || "", reference: form.reference || null, ai: { summary: "", missing: [], steps: [] } };
   try {
     const publicFields = (({ id, title, type, brand, store, requester, contact, deadline, purpose, details, product, quantity, use, reference }) => ({ id, title, type, brand, store, requester, contact, deadline, purpose, details, product, quantity, use, reference }))(request);
     await DesignFlowData.insert("requests", currentProfile ? rowRequest(request) : publicFields, !currentProfile);
+    fileUploadError = "";
+    if (form.attachments?.length) {
+      try { await uploadRequestAttachments(request); }
+      catch (error) { fileUploadError = `요청은 접수됐지만 첨부 파일 일부를 올리지 못했습니다. 요청 상세에서 다시 올려주세요. (${error.message})`; }
+    }
     if (currentProfile) { db.requests.unshift(request); if (currentProfile.role === "designer") savedRequestRows.set(id, JSON.stringify(rowRequest(request))); }
     selectedRequest = id; route = "request-success"; render();
   } catch (error) { const el = document.getElementById("form-error"); if (el) el.textContent = `접수하지 못했어요: ${error.message}`; else notify(`접수하지 못했어요: ${error.message}`); }
+}
+function getAllowedFileType(file) {
+  const extension = file.name.split(".").pop().toLowerCase();
+  const byExtension = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", svg: "image/svg+xml", pdf: "application/pdf", ai: "application/postscript", psd: "image/vnd.adobe.photoshop" };
+  return byExtension[extension] || file.type || "";
+}
+async function uploadRequestAttachments(request) {
+  const maxBytes = 20 * 1024 * 1024;
+  for (const file of form.attachments || []) {
+    const mimeType = getAllowedFileType(file);
+    if (!mimeType || file.size > maxBytes) throw new Error(`${file.name}: 지원하지 않는 형식이거나 20MB를 초과했습니다.`);
+    const safeName = file.name.replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-120);
+    if (currentUser) {
+      const objectPath = `${request.id}/request_attachment/${crypto.randomUUID()}_${safeName}`;
+      await DesignFlowData.uploadFile(file, objectPath, mimeType);
+      await DesignFlowData.insert("design_files", { request_id: request.id, kind: "request_attachment", version: 0, file_name: file.name, object_path: objectPath, mime_type: mimeType, size_bytes: file.size, description: null, uploaded_by: currentUser.id });
+    } else {
+      await DesignFlowData.uploadPublicRequestFile(file, request.id, mimeType);
+    }
+  }
+}
+async function uploadDetailFiles(event) {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const input = document.getElementById("detail-file-input");
+  const files = [...(input?.files || [])];
+  if (!files.length) return notify("먼저 올릴 파일을 선택해주세요.");
+  const request = db.requests.find(item => item.id === selectedRequest);
+  if (!request) return notify("요청을 찾을 수 없습니다.");
+  const kind = document.getElementById("detail-file-kind").value;
+  const description = document.getElementById("detail-file-description").value.trim();
+  const button = formElement.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    for (const file of files) {
+      const mimeType = getAllowedFileType(file);
+      if (!mimeType || file.size > 20 * 1024 * 1024) throw new Error(`${file.name}: 지원하지 않는 형식이거나 20MB를 초과했습니다.`);
+      const safeName = file.name.replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-120);
+      const objectPath = `${request.id}/${kind}/${crypto.randomUUID()}_${safeName}`;
+      await DesignFlowData.uploadFile(file, objectPath, mimeType);
+      await DesignFlowData.insert("design_files", { request_id: request.id, kind, version: 0, file_name: file.name, object_path: objectPath, mime_type: mimeType, size_bytes: file.size, description: description || null, uploaded_by: currentUser.id });
+    }
+    db.files = await DesignFlowData.select("design_files", {}, "created_at.desc");
+    notify("파일을 안전하게 등록했어요.");
+    render();
+  } catch (error) {
+    button.disabled = false;
+    notify(`파일을 등록하지 못했어요: ${error.message}`);
+  }
+}
+async function sendReviewResponse(decision) {
+  const error = document.getElementById("review-response-error");
+  const feedback = document.getElementById("review-feedback")?.value.trim() || "";
+  if (decision === "revision_requested" && !feedback) { if (error) error.textContent = "수정이 필요한 내용을 적어주세요."; return; }
+  try {
+    await DesignFlowData.backend("design-review", { action: "respond", token: reviewToken, decision, feedback }, true);
+    publicReviewData = await DesignFlowData.backend(`design-review?token=${encodeURIComponent(reviewToken)}`, null, true);
+    publicReviewError = "";
+    render();
+  } catch (failure) { if (error) error.textContent = failure.message; }
 }
 async function saveAnalysis(showToast = true) {
   const r = db.requests.find(x => x.id === selectedRequest); if (!r) return;
