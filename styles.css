@@ -376,3 +376,6 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
 .price-tier-field .helper { margin-top: 6px; }
 
 .quantity-control select { flex: 1; min-width: 0; height: 100%; border: 0; text-align: center; font-size: 12px; }
+
+.catalog-single-unit-toggle { display: flex; align-items: center; gap: 8px; min-height: 39px; cursor: pointer; }
+.catalog-single-unit-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #3568e8; }

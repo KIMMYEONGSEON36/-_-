@@ -84,9 +84,12 @@ create table if not exists public.request_products (
   minimum_quantity integer not null default 1 check (minimum_quantity >= 1),
   quantity_step integer not null default 1 check (quantity_step >= 1),
   quantity_options jsonb not null default '[]'::jsonb check (jsonb_typeof(quantity_options) = 'array'),
+  single_unit_order boolean not null default false,
   is_active boolean not null default true,
   updated_at timestamptz not null default now()
 );
+
+alter table public.request_products add column if not exists single_unit_order boolean not null default false;
 
 insert into public.request_products (product, minimum_quantity, quantity_step, quantity_options) values
   ('포스터', 5, 1, '[5,10,20,30,40,80]'::jsonb),
