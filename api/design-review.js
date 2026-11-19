@@ -41,7 +41,15 @@ async function requireStaff(req) {
   const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${bearer}` } });
   const user = await response.json().catch(() => null);
   if (!response.ok || !user?.id) throw Object.assign(new Error("로그인 정보를 확인할 수 없습니다."), { status: 401 });
-  const profile = await one(`/rest/v1/profiles?select=user_id,role&user_id=eq.${encodeURIComponent(user.id)}&limit=1`);
+  // Read the caller's own profile with their access token. The profile owner
+  // RLS policy already allows this, and it avoids relying on elevated table
+  // grants for the server key just to identify the staff role.
+  const profileResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=user_id,role&user_id=eq.${encodeURIComponent(user.id)}&limit=1`, {
+    headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${bearer}` }
+  });
+  const profiles = await profileResponse.json().catch(() => null);
+  if (!profileResponse.ok) throw new Error(profiles?.message || profiles?.msg || "직원 프로필을 확인하지 못했습니다.");
+  const profile = profiles?.[0] || null;
   if (!profile || !["designer", "sv"].includes(profile.role)) throw Object.assign(new Error("직원 권한이 필요합니다."), { status: 403 });
   return profile;
 }
