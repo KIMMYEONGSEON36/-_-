@@ -10,6 +10,6 @@ update public.request_products
 set quantity_options = case
   when product = '포스터' then '[5,10,20,30,40,80]'::jsonb
   else (select coalesce(jsonb_agg(q order by q), '[]'::jsonb)
-        from generate_series(minimum_quantity, minimum_quantity + quantity_step * 9, quantity_step) as quantities(q)
+        from generate_series(minimum_quantity, minimum_quantity + quantity_step * 9, quantity_step) as quantities(q))
 end
 where quantity_options = '[]'::jsonb;
