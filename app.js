@@ -45,7 +45,7 @@ function mapTimeLog(l) { return { id: l.id, taskId: l.task_id, minutes: l.minute
 async function loadWorkspaceData() {
   const prices = await DesignFlowData.select("price_items", currentProfile.role === "sv" ? { is_active: "eq.true" } : {}, "product.asc,size.asc,material.asc");
   db.prices = prices || [];
-  const [requests, tasks, logs, files, reviews, requestProducts] = await Promise.all([
+  const [requests, tasks, logs, files, reviews] = await Promise.all([
     DesignFlowData.select("requests", {}, "created.desc"),
     DesignFlowData.select("tasks", {}, "due.asc"),
     currentProfile.role === "designer" ? DesignFlowData.select("time_logs", {}, "date.desc") : Promise.resolve([]),
