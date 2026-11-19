@@ -65,6 +65,7 @@ create table if not exists public.price_items (
   is_active boolean not null default true,
   updated_at timestamptz not null default now(),
   print_side text not null default '단면' check (print_side in ('단면','양면')),
+  quantity_tiers jsonb not null default '[]'::jsonb,
   unique (product, size, material, print_side)
 );
 
@@ -72,6 +73,7 @@ create table if not exists public.price_items (
 alter table public.price_items add column if not exists minimum_quantity integer not null default 1 check (minimum_quantity >= 1);
 alter table public.price_items add column if not exists jeju_shipping_krw integer not null default 0 check (jeju_shipping_krw >= 0);
 alter table public.price_items add column if not exists print_side text not null default '단면' check (print_side in ('단면','양면'));
+alter table public.price_items add column if not exists quantity_tiers jsonb not null default '[]'::jsonb;
 alter table public.price_items drop constraint if exists price_items_product_size_material_key;
 alter table public.price_items drop constraint if exists price_items_product_size_material_print_side_key;
 alter table public.price_items add constraint price_items_product_size_material_print_side_key unique (product, size, material, print_side);

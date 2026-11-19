@@ -280,7 +280,7 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
 .price-save { min-height: 39px; white-space: nowrap; }
 .price-table-wrap { padding: 19px; overflow: hidden; }
 .price-table { overflow-x: auto; }
-.price-head, .price-row { min-width: 1060px; display: grid; grid-template-columns: 1.05fr .55fr .65fr 1.2fr 1fr .65fr .9fr .65fr 1fr; align-items: center; gap: 12px; padding: 12px 10px; border-bottom: 1px solid #eef0f3; font-size: 11px; }
+.price-head, .price-row { min-width: 1060px; display: grid; grid-template-columns: 1fr .5fr .6fr 1.05fr .8fr 1.3fr .65fr .85fr .6fr .9fr; align-items: center; gap: 12px; padding: 12px 10px; border-bottom: 1px solid #eef0f3; font-size: 11px; }
 .price-head { color: #96a0ab; background: #fafbfc; font-size: 10px; }
 .price-row.inactive { color: #9aa3ad; background: #fbfbfc; }
 .price-actions { display: flex; gap: 10px; }
@@ -371,3 +371,6 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
 .review-inbox-status.revision_requested { padding: 7px 10px; background: #ffebc9; color: #95510a; font-weight: 800; }
 .review-inbox-row:has(.review-inbox-status.approved) { background: #f4fbf7; }
 .review-inbox-row:has(.review-inbox-status.revision_requested) { background: #fffbf3; }
+
+.price-tier-field textarea { width: 100%; padding: 10px; border: 1px solid #e1e6ed; border-radius: 7px; resize: vertical; font: inherit; font-size: 11px; line-height: 1.6; }
+.price-tier-field .helper { margin-top: 6px; }
