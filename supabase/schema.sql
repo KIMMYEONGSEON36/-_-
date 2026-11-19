@@ -176,6 +176,10 @@ create policy "designer can delete prices" on public.price_items
 
 grant select, insert on public.design_files to authenticated;
 grant select on public.design_reviews to authenticated;
+-- The server API uses the elevated service_role only after authenticating staff
+-- or validating a review token. Keep its required Data API table privileges
+-- explicit in case project-level default grants were changed.
+grant select, insert, update on public.requests, public.design_files, public.design_reviews to service_role;
 drop policy if exists "staff can read design files" on public.design_files;
 create policy "staff can read design files" on public.design_files
   for select to authenticated using (public.current_design_flow_role() in ('designer','sv'));

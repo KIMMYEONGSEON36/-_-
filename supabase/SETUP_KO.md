@@ -46,6 +46,7 @@ from auth.users where email = 'sv@example.com';
 
 1. `supabase/migrations/20261118_sv_requests_quote_options.sql`
 2. `supabase/migrations/20261119_private_files_and_design_review.sql`
+3. `supabase/migrations/20261119_design_review_service_role_grants.sql`
 
 Vercel 프로젝트의 **Settings → Environment Variables**에서 `SUPABASE_SERVICE_ROLE_KEY`에 Supabase의 서버용 **Secret key (`sb_secret_...`)**를 넣고 다시 배포하세요. 예전 형식의 `service_role` JWT (`eyJ...`)도 사용할 수 있습니다. 새 Secret key는 JWT가 아니므로 서버에서 `apikey` 헤더에만 전달합니다. 이 비밀 키는 Vercel 서버 함수에서만 사용되며, 앱 파일이나 GitHub에는 넣지 마세요.
 
