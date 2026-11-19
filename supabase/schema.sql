@@ -83,14 +83,19 @@ create table if not exists public.request_products (
   product text not null unique,
   minimum_quantity integer not null default 1 check (minimum_quantity >= 1),
   quantity_step integer not null default 1 check (quantity_step >= 1),
+  quantity_options jsonb not null default '[]'::jsonb check (jsonb_typeof(quantity_options) = 'array'),
   is_active boolean not null default true,
   updated_at timestamptz not null default now()
 );
 
-insert into public.request_products (product, minimum_quantity, quantity_step) values
-  ('포스터', 5, 5), ('현수막', 1, 1), ('배너', 1, 1), ('메뉴판', 1, 1),
-  ('한접시무료쿠폰', 1, 1), ('와블러', 1, 1), ('POP-포멕스', 1, 1), ('POP-폼보드', 1, 1),
-  ('PET', 1, 1), ('메쉬배너-출력물', 1, 1), ('PET배너-출력물', 1, 1), ('철제물통배너세트', 1, 1), ('전단지', 1, 1)
+insert into public.request_products (product, minimum_quantity, quantity_step, quantity_options) values
+  ('포스터', 5, 1, '[5,10,20,30,40,80]'::jsonb),
+  ('현수막', 1, 1, '[1,5,10,20,30,50,100]'::jsonb), ('배너', 1, 1, '[1,5,10,20,30,50,100]'::jsonb),
+  ('메뉴판', 1, 1, '[1,5,10,20,30,50,100]'::jsonb), ('한접시무료쿠폰', 1, 1, '[1,5,10,20,30,50,100]'::jsonb),
+  ('와블러', 1, 1, '[1,5,10,20,30,50,100]'::jsonb), ('POP-포멕스', 1, 1, '[1,5,10,20,30,50,100]'::jsonb),
+  ('POP-폼보드', 1, 1, '[1,5,10,20,30,50,100]'::jsonb), ('PET', 1, 1, '[1,5,10,20,30,50,100]'::jsonb),
+  ('메쉬배너-출력물', 1, 1, '[1,5,10,20,30,50,100]'::jsonb), ('PET배너-출력물', 1, 1, '[1,5,10,20,30,50,100]'::jsonb),
+  ('철제물통배너세트', 1, 1, '[1,5,10,20,30,50,100]'::jsonb), ('전단지', 1, 1, '[1,5,10,20,30,50,100]'::jsonb)
 on conflict (product) do nothing;
 
 create table if not exists public.design_reviews (
