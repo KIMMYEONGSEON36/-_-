@@ -113,6 +113,12 @@
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.message || payload.error || "파일 업로드에 실패했습니다.");
     },
+    async uploadReviewAttachment(file, token, mimeType) {
+      const ticket = await this.backend("design-review", { action: "review_upload_ticket", token, file_name: file.name, mime_type: mimeType, size_bytes: file.size }, true);
+      const response = await fetch(ticket.upload_url, { method: "PUT", headers: { "Content-Type": mimeType }, body: file });
+      if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(payload.message || "수정 요청 파일 업로드에 실패했습니다."); }
+      return { object_path: ticket.object_path, file_name: ticket.file_name, mime_type: ticket.mime_type, size_bytes: ticket.size_bytes };
+    },
     async uploadPublicRequestFile(file, requestId, mimeType) {
       const ticket = await this.backend("design-review", { action: "guest_upload", request_id: requestId, file_name: file.name, mime_type: mimeType, size_bytes: file.size }, true);
       const response = await fetch(ticket.upload_url, { method: "PUT", headers: { "Content-Type": mimeType }, body: file });

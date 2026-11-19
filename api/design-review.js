@@ -76,9 +76,11 @@ async function publicReview(token) {
   if (Number(latest?.version) > Number(review.version)) review.status = "superseded";
   const request = await one(`/rest/v1/requests?select=id,title,type,brand,store,requester,deadline,product,quantity,details,purpose,status,created&id=eq.${encodeURIComponent(review.request_id)}&limit=1`);
   if (!request) return null;
-  const files = await db(`/rest/v1/design_files?select=id,kind,version,file_name,mime_type,size_bytes,description,object_path&review_id=eq.${encodeURIComponent(review.id)}&order=created_at.asc`);
+  const files = await db(`/rest/v1/design_files?select=id,kind,version,file_name,mime_type,size_bytes,description,object_path&review_id=eq.${encodeURIComponent(review.id)}&kind=eq.draft&order=created_at.asc`);
+  const responseFiles = await db(`/rest/v1/design_files?select=id,kind,version,file_name,mime_type,size_bytes,description,object_path&review_id=eq.${encodeURIComponent(review.id)}&kind=eq.review_attachment&order=created_at.asc`);
   const downloads = await Promise.all((files || []).map(async file => ({ ...file, preview_url: await signedDownload(file, false), download_url: await signedDownload(file, true) })));
-  return { review: { version: review.version, status: review.status, feedback: review.feedback, created_at: review.created_at, responded_at: review.responded_at }, request, files: downloads };
+  const responseDownloads = await Promise.all((responseFiles || []).map(async file => ({ ...file, download_url: await signedDownload(file, true) })));
+  return { review: { version: review.version, status: review.status, feedback: review.feedback, created_at: review.created_at, responded_at: review.responded_at }, request, files: downloads, response_attachments: responseDownloads };
 }
 
 module.exports = async function handler(req, res) {
@@ -116,16 +118,43 @@ module.exports = async function handler(req, res) {
       return json(res, 200, { ok: true });
     }
 
+    if (action === "review_upload_ticket") {
+      const token = String(req.body?.token || "");
+      if (!/^[a-f0-9]{64}$/i.test(token)) return json(res, 404, { error: "시안 링크를 확인할 수 없습니다." });
+      const review = await one(`/rest/v1/design_reviews?select=id,request_id,status,version,token_hash&token_hash=eq.${tokenHash(token)}&limit=1`);
+      if (!review || review.status !== "pending") return json(res, 409, { error: "응답 가능한 시안 링크가 아닙니다." });
+      const mimeType = String(req.body?.mime_type || "");
+      const size = Number(req.body?.size_bytes) || 0;
+      const fileName = String(req.body?.file_name || "").slice(0, 240);
+      if (!ALLOWED_MIME.has(mimeType) || size < 1 || size > 20 * 1024 * 1024 || !fileName) return json(res, 400, { error: "파일 형식 또는 크기를 확인해주세요. (파일당 최대 20MB)" });
+      const current = await db(`/rest/v1/design_files?select=id&review_id=eq.${encodeURIComponent(review.id)}&kind=eq.review_attachment`);
+      if (current.length >= 10) return json(res, 400, { error: "수정 요청 첨부 파일은 최대 10개까지 가능합니다." });
+      const ext = fileName.split(".").pop().toLowerCase();
+      const safeExt = ["png", "jpg", "jpeg", "webp", "svg", "pdf", "ai", "psd"].includes(ext) ? ext : "bin";
+      const objectPath = `${review.request_id}/review_response/${review.id}/${crypto.randomUUID()}.${safeExt}`;
+      const signed = await db(`/storage/v1/object/upload/sign/${BUCKET}/${encodePath(objectPath)}`, { method: "POST", body: {} });
+      if (!signed?.url) throw new Error("첨부 파일 업로드 링크를 만들지 못했습니다.");
+      const uploadUrl = signed.url.startsWith("http") ? signed.url : `${SUPABASE_URL}/storage/v1${signed.url.startsWith("/") ? signed.url : `/${signed.url}`}`;
+      return json(res, 200, { upload_url: uploadUrl, object_path: objectPath, file_name: fileName, mime_type: mimeType, size_bytes: size });
+    }
+
     if (action === "respond") {
       const token = String(req.body?.token || "");
       if (!/^[a-f0-9]{64}$/i.test(token)) return json(res, 404, { error: "시안 링크를 확인할 수 없습니다." });
-      const review = await one(`/rest/v1/design_reviews?select=id,request_id,status,token_hash&token_hash=eq.${tokenHash(token)}&limit=1`);
+      const review = await one(`/rest/v1/design_reviews?select=id,request_id,status,version,token_hash&token_hash=eq.${tokenHash(token)}&limit=1`);
       if (!review) return json(res, 404, { error: "시안 링크를 찾을 수 없습니다." });
       if (review.status !== "pending") return json(res, 409, { error: "이미 응답한 시안입니다." });
       const decision = req.body?.decision;
       const feedback = String(req.body?.feedback || "").trim().slice(0, 2000);
       if (!["approved", "revision_requested"].includes(decision)) return json(res, 400, { error: "응답을 선택해주세요." });
       if (decision === "revision_requested" && !feedback) return json(res, 400, { error: "수정 요청 내용을 입력해주세요." });
+      const attachments = Array.isArray(req.body?.attachments) ? req.body.attachments.slice(0, 10) : [];
+      if (decision === "approved" && attachments.length) return json(res, 400, { error: "승인 응답에는 첨부 파일을 등록할 수 없습니다." });
+      for (const file of attachments) {
+        const name = String(file.file_name || "").slice(0, 240); const mime = String(file.mime_type || ""); const size = Number(file.size_bytes) || 0; const path = String(file.object_path || "");
+        if (!name || !ALLOWED_MIME.has(mime) || size < 1 || size > 20 * 1024 * 1024 || !path.startsWith(`${review.request_id}/review_response/${review.id}/`) || path.includes("..")) return json(res, 400, { error: "수정 요청 첨부 파일 정보를 확인해주세요." });
+        await db("/rest/v1/design_files", { method: "POST", prefer: "return=minimal", body: { request_id: review.request_id, review_id: review.id, kind: "review_attachment", version: review.version, file_name: name, object_path: path, mime_type: mime, size_bytes: size, uploaded_by: null } });
+      }
       await db(`/rest/v1/design_reviews?id=eq.${encodeURIComponent(review.id)}`, { method: "PATCH", body: { status: decision, feedback: feedback || null, responded_at: new Date().toISOString() }, prefer: "return=minimal" });
       await db(`/rest/v1/requests?id=eq.${encodeURIComponent(review.request_id)}`, { method: "PATCH", body: { status: decision === "approved" ? "디자인 승인" : "수정 요청" }, prefer: "return=minimal" });
       return json(res, 200, { ok: true, status: decision, feedback: feedback || null });

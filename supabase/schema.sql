@@ -24,6 +24,7 @@ create table if not exists public.requests (
   details text not null,
   product text,
   quantity text,
+  print_side text not null default '단면' check (print_side in ('단면','양면')),
   use text,
   reference text,
   ai jsonb,
@@ -63,12 +64,32 @@ create table if not exists public.price_items (
   jeju_shipping_krw integer not null default 0 check (jeju_shipping_krw >= 0),
   is_active boolean not null default true,
   updated_at timestamptz not null default now(),
-  unique (product, size, material)
+  print_side text not null default '단면' check (print_side in ('단면','양면')),
+  unique (product, size, material, print_side)
 );
 
 -- Safe for projects created before minimum quantities and Jeju shipping were added.
 alter table public.price_items add column if not exists minimum_quantity integer not null default 1 check (minimum_quantity >= 1);
 alter table public.price_items add column if not exists jeju_shipping_krw integer not null default 0 check (jeju_shipping_krw >= 0);
+alter table public.price_items add column if not exists print_side text not null default '단면' check (print_side in ('단면','양면'));
+alter table public.price_items drop constraint if exists price_items_product_size_material_key;
+alter table public.price_items drop constraint if exists price_items_product_size_material_print_side_key;
+alter table public.price_items add constraint price_items_product_size_material_print_side_key unique (product, size, material, print_side);
+
+create table if not exists public.request_products (
+  id bigint generated always as identity primary key,
+  product text not null unique,
+  minimum_quantity integer not null default 1 check (minimum_quantity >= 1),
+  quantity_step integer not null default 1 check (quantity_step >= 1),
+  is_active boolean not null default true,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.request_products (product, minimum_quantity, quantity_step) values
+  ('포스터', 5, 5), ('현수막', 1, 1), ('배너', 1, 1), ('메뉴판', 1, 1),
+  ('한접시무료쿠폰', 1, 1), ('와블러', 1, 1), ('POP-포멕스', 1, 1), ('POP-폼보드', 1, 1),
+  ('PET', 1, 1), ('메쉬배너-출력물', 1, 1), ('PET배너-출력물', 1, 1), ('철제물통배너세트', 1, 1), ('전단지', 1, 1)
+on conflict (product) do nothing;
 
 create table if not exists public.design_reviews (
   id uuid primary key default gen_random_uuid(),
@@ -86,7 +107,7 @@ create table if not exists public.design_files (
   id uuid primary key default gen_random_uuid(),
   request_id text not null references public.requests(id) on delete cascade,
   review_id uuid references public.design_reviews(id) on delete set null,
-  kind text not null check (kind in ('request_attachment','draft','final')),
+  kind text not null check (kind in ('request_attachment','draft','final','review_attachment')),
   version integer not null default 0 check (version >= 0),
   file_name text not null,
   object_path text not null unique,
@@ -120,10 +141,11 @@ alter table public.requests enable row level security;
 alter table public.tasks enable row level security;
 alter table public.time_logs enable row level security;
 alter table public.price_items enable row level security;
+alter table public.request_products enable row level security;
 alter table public.design_files enable row level security;
 alter table public.design_reviews enable row level security;
 
-revoke all on public.profiles, public.requests, public.tasks, public.time_logs, public.price_items, public.design_files, public.design_reviews from anon, authenticated;
+revoke all on public.profiles, public.requests, public.tasks, public.time_logs, public.price_items, public.request_products, public.design_files, public.design_reviews from anon, authenticated;
 grant usage on schema public to anon, authenticated;
 
 drop policy if exists "profile owner can read" on public.profiles;
@@ -174,8 +196,21 @@ drop policy if exists "designer can delete prices" on public.price_items;
 create policy "designer can delete prices" on public.price_items
   for delete to authenticated using (public.current_design_flow_role() = 'designer');
 
+drop policy if exists "public can read active request products" on public.request_products;
+create policy "public can read active request products" on public.request_products
+  for select to anon using (is_active = true);
+drop policy if exists "staff can read request products" on public.request_products;
+create policy "staff can read request products" on public.request_products
+  for select to authenticated using (public.current_design_flow_role() = 'designer' or (public.current_design_flow_role() = 'sv' and is_active = true));
+drop policy if exists "designer can manage request products" on public.request_products;
+create policy "designer can manage request products" on public.request_products
+  for all to authenticated using (public.current_design_flow_role() = 'designer') with check (public.current_design_flow_role() = 'designer');
+
 grant select, insert on public.design_files to authenticated;
 grant select on public.design_reviews to authenticated;
+grant select on public.request_products to anon, authenticated;
+grant insert, update, delete on public.request_products to authenticated;
+grant usage, select on sequence public.request_products_id_seq to authenticated;
 -- The server API uses the elevated service_role only after authenticating staff
 -- or validating a review token. Keep its required Data API table privileges
 -- explicit in case project-level default grants were changed.
@@ -208,7 +243,7 @@ create policy "designer can delete design flow files" on storage.objects
 
 grant select on public.profiles to authenticated;
 grant select, insert, update, delete on public.requests to authenticated;
-grant insert (id, title, type, brand, store, requester, contact, created, deadline, status, priority, purpose, details, product, quantity, use, reference)
+grant insert (id, title, type, brand, store, requester, contact, created, deadline, status, priority, purpose, details, product, quantity, print_side, use, reference)
   on public.requests to anon;
 grant select, insert, update, delete on public.tasks, public.time_logs, public.price_items to authenticated;
 grant usage, select on sequence public.price_items_id_seq to authenticated;
