@@ -211,6 +211,18 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
 .quote-rule { margin-top: 12px; color: #34745f; font-size: 10px; font-weight: 600; }
 .quote-disclaimer { margin: 17px 0; color: #909ba7; font-size: 10px; line-height: 1.6; }
 .quote-result .btn { align-self: flex-start; }
+.quote-notice { margin: -4px 0 16px; padding: 16px 19px; border: 1px solid #bfd2ff; border-left: 5px solid #3569e9; border-radius: 12px; background: #f2f6ff; color: #203b70; }
+.quote-notice strong { display: block; margin-bottom: 5px; font-size: 14px; }
+.quote-notice p { margin: 0; color: #526783; font-size: 12px; line-height: 1.65; }
+.quote-field { margin-top: 15px; }
+.design-fee-guide { margin-top: 16px; }
+.design-fee-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 14px; }
+.design-fee-grid > div { padding: 15px; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfe; }
+.design-fee-grid strong { display: block; margin-bottom: 9px; color: #233249; font-size: 12px; }
+.design-fee-grid strong span { margin-left: 5px; color: #6d7c91; font-size: 10px; font-weight: 500; }
+.design-fee-grid p { margin: 5px 0; color: #66758a; font-size: 11px; line-height: 1.6; }
+.design-fee-grid p b { color: #2e5ed7; }
+.design-fee-grid .design-fee-separate { color: #9b5c18; font-weight: 700; }
 .quantity-control { display: flex; align-items: center; width: 170px; height: 39px; border: 1px solid #e3e7ec; border-radius: 7px; overflow: hidden; }
 .quantity-step { width: 38px; height: 100%; border: 0; background: #fafbfd; color: #526272; font-size: 17px; }
 .quantity-control input { width: 92px; height: 100%; border: 0; text-align: center; font-size: 12px; }
@@ -322,6 +334,7 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
   .login-card { padding: 24px 19px; }
   .quote-layout { grid-template-columns: 1fr; }
   .quote-result { min-height: 235px; }
+  .design-fee-grid { grid-template-columns: 1fr; }
   .price-form { grid-template-columns: 1fr 1fr; }
   .price-form .field:nth-child(3) { grid-column: 1 / -1; }
   .price-form .btn { grid-column: 1 / -1; }

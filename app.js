@@ -18,7 +18,16 @@ let workspaceError = "";
 let savedRequestRows = new Map();
 let savedTaskRows = new Map();
 let priceEditId = null;
-let quoteSelection = { product: "", size: "", material: "", quantity: 1, deliveryArea: "기본 배송" };
+let quoteSelection = { product: "", size: "", material: "", quantity: 1, deliveryArea: "기본 배송", designTask: "print_only" };
+const DESIGN_FEE_ITEMS = [
+  { id: "print_only", level: "인쇄만", name: "기존 시안으로 인쇄", fee: 0, description: "디자인 작업 없이 준비된 시안으로 인쇄합니다." },
+  { id: "text_edit", level: "A. 단순 수정형 · 난이도 하", name: "단순 텍스트 수정", fee: 5000, description: "기존 디자인에서 문구만 바꾸는 작업입니다." },
+  { id: "size_change", level: "A. 단순 수정형 · 난이도 하", name: "기존 디자인 규격 변경", fee: 10000, description: "기존 디자인의 크기나 규격을 변경하는 작업입니다." },
+  { id: "photo_edit", level: "A. 단순 수정형 · 난이도 하", name: "사진 보정 및 합성", fee: 20000, description: "기존 사진을 보정하거나 이미지끼리 합성하는 작업입니다." },
+  { id: "element_edit", level: "A. 단순 수정형 · 난이도 하", name: "디자인 요소 추가 및 수정", fee: 30000, description: "기존 시안에 디자인 요소를 추가하거나 수정하는 작업입니다." },
+  { id: "general_design", level: "B. 일반 제작형 · 난이도 중", name: "일반 제작형", fee: null, description: "기존 시안을 참고하되 새로운 레이아웃과 디자인 구성이 필요한 작업입니다." },
+  { id: "creative_design", level: "C. 창작형 · 난이도 상", name: "창작형", fee: null, description: "디자인 콘셉트부터 비주얼 구성까지 새롭게 기획하는 작업입니다." }
+];
 let publicReviewData = null;
 let publicReviewError = "";
 let reviewShareLink = "";
@@ -113,13 +122,26 @@ function loginPage() {
 function startupPage() {
   return `<section class="login-page"><div class="login-card"><div class="brand-mark login-mark">D</div><div class="eyebrow">DESIGN FLOW SETUP</div><h1>데이터베이스 설정이 필요해요</h1><p class="subhead">Supabase 프로젝트에 데이터베이스 구조를 먼저 적용해야 앱을 연결할 수 있습니다.</p><div class="setup-callout">프로젝트 폴더의 <strong>supabase/schema.sql</strong> 내용을 Supabase 대시보드의 SQL Editor에서 실행한 뒤 새로고침해주세요.</div><button class="btn" data-go="request-form">디자인 요청 접수 열기</button></div></section>`;
 }
+function quotePricesFor(product = quoteSelection.product, size = quoteSelection.size) {
+  return db.prices.filter(p => p.product === product && (currentProfile.role === "designer" || p.is_active) && (!size || p.size === size));
+}
+function quoteMinimumFor(product = quoteSelection.product, size = quoteSelection.size, material = quoteSelection.material) {
+  const productRows = quotePricesFor(product, "");
+  const sizes = [...new Set(productRows.map(p => p.size))].sort();
+  const selectedSize = sizes.includes(size) ? size : sizes[0];
+  const sizeRows = productRows.filter(p => p.size === selectedSize);
+  const materials = [...new Set(sizeRows.map(p => p.material))].sort();
+  const selectedMaterial = materials.includes(material) ? material : materials[0];
+  const chosen = sizeRows.find(p => p.material === selectedMaterial);
+  return Number(chosen?.minimum_quantity) || 1;
+}
 function quotePage() {
   const productNames = [...new Set(db.prices.map(p => p.product))].sort();
   if (!productNames.includes(quoteSelection.product)) quoteSelection.product = productNames[0] || "";
-  const productRows = db.prices.filter(p => p.product === quoteSelection.product && (currentProfile.role === "designer" || p.is_active));
+  const productRows = quotePricesFor(quoteSelection.product);
   const sizes = [...new Set(productRows.map(p => p.size))].sort();
   if (!sizes.includes(quoteSelection.size)) quoteSelection.size = sizes[0] || "";
-  const sizeRows = productRows.filter(p => p.size === quoteSelection.size);
+  const sizeRows = quotePricesFor(quoteSelection.product, quoteSelection.size);
   const materials = [...new Set(sizeRows.map(p => p.material))].sort();
   if (!materials.includes(quoteSelection.material)) quoteSelection.material = materials[0] || "";
   const chosen = sizeRows.find(p => p.material === quoteSelection.material);
@@ -127,15 +149,21 @@ function quotePage() {
   const qty = Math.max(minimum, Number(quoteSelection.quantity) || minimum);
   quoteSelection.quantity = qty;
   const jejuFee = quoteSelection.deliveryArea === "제주도" ? Number(chosen?.jeju_shipping_krw) || 0 : 0;
-  const total = chosen ? Number(chosen.unit_price_krw) * qty + jejuFee : 0;
-  return `<section class="page">${head("QUICK QUOTE", "간편 견적 확인", "품목과 제작 조건을 선택하면 기준 단가로 예상 금액을 계산합니다.")}${productNames.length ? `<div class="quote-layout"><div class="panel quote-form"><div class="section-label">제작 조건 선택</div><div class="field"><label>품목</label><select id="quote-product">${productNames.map(p => `<option ${quoteSelection.product === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div><div class="field" style="margin-top:15px"><label>크기</label><select id="quote-size">${sizes.map(s => `<option ${quoteSelection.size === s ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></div><div class="field" style="margin-top:15px"><label>재질</label><select id="quote-material">${materials.map(m => `<option ${quoteSelection.material === m ? "selected" : ""}>${esc(m)}</option>`).join("")}</select></div><div class="field" style="margin-top:15px"><label>배송 지역</label><select id="quote-delivery-area"><option ${quoteSelection.deliveryArea === "기본 배송" ? "selected" : ""}>기본 배송</option><option ${quoteSelection.deliveryArea === "제주도" ? "selected" : ""}>제주도</option></select></div><div class="field" style="margin-top:15px"><label>수량</label><div class="quantity-control"><button class="quantity-step" data-qty="-1" aria-label="수량 줄이기">−</button><input id="quote-quantity" type="number" min="${minimum}" step="1" value="${qty}" /><button class="quantity-step" data-qty="1" aria-label="수량 늘리기">＋</button></div><div class="helper">최소 주문 수량 ${minimum}개부터 계산됩니다.</div></div></div><div class="panel quote-result"><div class="quote-label">예상 견적 금액</div><div class="quote-total">${chosen ? `₩${total.toLocaleString("ko-KR")}` : "조건을 선택해주세요"}</div>${chosen ? `<div class="quote-math"><span>${esc(chosen.product)} · ${esc(chosen.size)} · ${esc(chosen.material)}</span><span>₩${Number(chosen.unit_price_krw).toLocaleString("ko-KR")} × ${qty}개</span>${jejuFee ? `<span>제주 추가 배송비</span><span>₩${jejuFee.toLocaleString("ko-KR")}</span>` : ""}</div><div class="quote-rule">기본 단가에는 부가세와 기본 배송비가 포함됩니다.</div>` : ""}<div class="quote-disclaimer">등록된 기준 단가를 바탕으로 한 예상 금액입니다. 별도 조건이 있는 경우 담당자에게 확인해주세요.</div><button class="btn" id="copy-quote" ${chosen ? "" : "disabled"}>견적 내용 복사</button></div></div>` : `<div class="panel empty-price"><div class="empty-illustration">₩</div><h2>등록된 단가가 아직 없어요</h2><p>${currentProfile.role === "designer" ? "단가표 관리에서 품목·크기·재질별 가격을 먼저 등록해주세요." : "디자인 담당자가 단가를 준비 중입니다. 잠시 후 다시 확인해주세요."}</p>${currentProfile.role === "designer" ? `<button class="btn primary" data-go="prices">단가 등록하기</button>` : ""}</div>`}</section>`;
+  const designTask = DESIGN_FEE_ITEMS.find(item => item.id === quoteSelection.designTask) || DESIGN_FEE_ITEMS[0];
+  const quoteRequired = designTask.fee === null;
+  const printSubtotal = chosen ? Number(chosen.unit_price_krw) * qty + jejuFee : 0;
+  const total = printSubtotal + (quoteRequired ? 0 : designTask.fee);
+  const designDescription = `${designTask.level} · ${designTask.description}${designTask.fee === null ? " 디자인비는 접수 후 별도 견적합니다." : ` 디자인비 ₩${designTask.fee.toLocaleString("ko-KR")}`}`;
+  const notice = `<div class="quote-notice"><strong>점주님 간단 문의용 참고 견적입니다</strong><p>실제 금액은 작업 난이도와 제작 조건에 따라 달라질 수 있습니다. 주문 접수 후 상세 견적을 안내드립니다.</p></div>`;
+  return `<section class="page">${head("QUICK QUOTE", "간편 견적 확인", "제작 조건과 디자인 작업 범위를 선택해 예상 금액을 확인하세요.")}${notice}${productNames.length ? `<div class="quote-layout"><div class="panel quote-form"><div class="section-label">제작 조건 선택</div><div class="field"><label for="quote-product">품목</label><select id="quote-product">${productNames.map(p => `<option ${quoteSelection.product === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div><div class="field quote-field"><label for="quote-size">크기</label><select id="quote-size">${sizes.map(s => `<option ${quoteSelection.size === s ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></div><div class="field quote-field"><label for="quote-material">재질</label><select id="quote-material">${materials.map(m => `<option ${quoteSelection.material === m ? "selected" : ""}>${esc(m)}</option>`).join("")}</select></div><div class="field quote-field"><label for="quote-delivery-area">배송 지역</label><select id="quote-delivery-area"><option ${quoteSelection.deliveryArea === "기본 배송" ? "selected" : ""}>기본 배송</option><option ${quoteSelection.deliveryArea === "제주도" ? "selected" : ""}>제주도</option></select></div><div class="field quote-field"><label for="quote-design-task">디자인 작업 범위 · 난이도</label><select id="quote-design-task">${DESIGN_FEE_ITEMS.map(item => `<option value="${item.id}" ${quoteSelection.designTask === item.id ? "selected" : ""}>${esc(item.level)} — ${esc(item.name)}${item.fee === null ? " · 별도 견적" : ` · ₩${item.fee.toLocaleString("ko-KR")}`}</option>`).join("")}</select><div class="helper">${esc(designDescription)}</div></div><div class="field quote-field"><label for="quote-quantity">수량</label><div class="quantity-control"><button class="quantity-step" data-qty="-1" aria-label="수량 줄이기">−</button><input id="quote-quantity" type="number" min="${minimum}" step="1" value="${qty}" /><button class="quantity-step" data-qty="1" aria-label="수량 늘리기">＋</button></div><div class="helper">선택한 품목의 최소 주문 수량 ${minimum}개부터 계산됩니다.</div></div></div><div class="panel quote-result"><div class="quote-label">${quoteRequired ? "제작비 예상 소계 · 디자인비 별도" : "예상 견적 금액"}</div><div class="quote-total">${chosen ? `₩${total.toLocaleString("ko-KR")}` : "조건을 선택해주세요"}</div>${chosen ? `<div class="quote-math"><span>제작비 · ${esc(chosen.product)} ${esc(chosen.size)} ${esc(chosen.material)} ${qty}개</span><span>₩${(Number(chosen.unit_price_krw) * qty).toLocaleString("ko-KR")}</span><span>디자인비 · ${esc(designTask.name)}</span><span>${designTask.fee === null ? "접수 후 별도 견적" : `₩${designTask.fee.toLocaleString("ko-KR")}`}</span>${jejuFee ? `<span>제주 추가 배송비</span><span>₩${jejuFee.toLocaleString("ko-KR")}</span>` : ""}</div><div class="quote-rule">제작 단가에는 부가세와 기본 배송비가 포함됩니다.</div>` : ""}<div class="quote-disclaimer">${quoteRequired ? "선택한 작업은 새 레이아웃 또는 콘셉트 기획이 포함되어 디자인비를 접수 후 산정합니다." : "표시된 금액은 기준 단가에 디자인비를 더한 참고 금액입니다."} 실제 금액은 조건에 따라 달라질 수 있으며, 주문 접수 후 자세한 견적을 안내드립니다.</div><button class="btn" id="copy-quote" ${chosen ? "" : "disabled"}>견적 내용 복사</button></div></div>` : `<div class="panel empty-price"><div class="empty-illustration">₩</div><h2>등록된 단가가 아직 없어요</h2><p>${currentProfile.role === "designer" ? "단가표 관리에서 품목·크기·재질별 가격을 먼저 등록해주세요." : "디자인 담당자가 단가를 준비 중입니다. 잠시 후 다시 확인해주세요."}</p>${currentProfile.role === "designer" ? `<button class="btn primary" data-go="prices">단가 등록하기</button>` : ""}</div>`}<div class="panel design-fee-guide"><div class="panel-title">디자인 난이도별 기준</div><div class="design-fee-grid"><div><strong>A · 단순 수정형 <span>난이도 하</span></strong><p>텍스트 수정 ₩5,000 · 규격 변경 ₩10,000</p><p>사진 보정·합성 ₩20,000 · 디자인 요소 추가·수정 ₩30,000</p></div><div><strong>B · 일반 제작형 <span>난이도 중</span></strong><p>기존 시안을 참고해 새 레이아웃과 디자인 구성이 필요한 작업입니다.</p><p>디자인비는 접수 후 별도 견적합니다.</p></div><div><strong>C · 창작형 <span>난이도 상</span></strong><p>디자인 콘셉트부터 비주얼 구성까지 새롭게 기획하는 작업입니다.</p><p>디자인비는 접수 후 별도 견적합니다.</p></div></div></div></section>`;
 }
 function pricesPage() {
   const editing = db.prices.find(p => String(p.id) === String(priceEditId));
   const rows = [...db.prices].sort((a,b) => `${a.product}${a.size}${a.material}`.localeCompare(`${b.product}${b.size}${b.material}`));
-  return `<section class="page">${head("PRICE CATALOG", "단가표 관리", "품목·크기·재질별 단가를 등록하면 SV 견적 화면에 바로 반영됩니다.")}
+  return `<section class="page">${head("PRICE CATALOG", "단가표 관리", "제작 단가와 난이도별 디자인비 기준을 함께 확인할 수 있습니다.")}
     <div class="panel price-editor"><div class="panel-head"><div><div class="panel-title">${editing ? "단가 수정" : "새 단가 등록"}</div><div class="panel-sub">부가세와 배송비가 포함된 최종 단가를 입력하세요.</div></div>${editing ? `<button class="btn small" id="cancel-price-edit">취소</button>` : ""}</div>
     <form id="price-form" class="price-form"><div class="field"><label for="price-product">품목</label><input id="price-product" required maxlength="80" value="${esc(editing?.product || "")}" placeholder="예: 포스터" /></div><div class="field"><label for="price-size">크기</label><input id="price-size" required maxlength="80" value="${esc(editing?.size || "")}" placeholder="예: A2" /></div><div class="field"><label for="price-material">재질</label><input id="price-material" required maxlength="100" value="${esc(editing?.material || "")}" placeholder="예: 아트지 150g" /></div><div class="field"><label for="price-unit">매당 단가 (원)</label><input id="price-unit" type="number" min="0" step="1" required value="${editing ? Number(editing.unit_price_krw) : ""}" placeholder="예: 3500" /></div><div class="field"><label for="price-minimum">최소 주문 수량</label><input id="price-minimum" type="number" min="1" step="1" required value="${Number(editing?.minimum_quantity) || 1}" placeholder="예: 5" /></div><div class="field"><label for="price-jeju">제주 추가 배송비 (원)</label><input id="price-jeju" type="number" min="0" step="1" required value="${Number(editing?.jeju_shipping_krw) || 0}" placeholder="예: 5000" /></div><button class="btn primary price-save" type="submit">${editing ? "변경 저장" : "단가 추가"}</button></form></div>
+    <div class="panel design-fee-guide"><div class="panel-title">디자인비 기준표</div><div class="design-fee-grid"><div><strong>A · 단순 수정형 <span>난이도 하</span></strong><p>단순 텍스트 수정 <b>₩5,000</b></p><p>기존 디자인 규격 변경 <b>₩10,000</b></p><p>사진 보정 및 합성 <b>₩20,000</b></p><p>디자인 요소 추가 및 수정 <b>₩30,000</b></p></div><div><strong>B · 일반 제작형 <span>난이도 중</span></strong><p>기존 시안을 참고하되 새로운 레이아웃과 디자인 구성이 필요한 작업</p><p class="design-fee-separate">디자인비: 접수 후 별도 견적</p></div><div><strong>C · 창작형 <span>난이도 상</span></strong><p>디자인 콘셉트부터 비주얼 구성까지 새롭게 기획하는 작업</p><p class="design-fee-separate">디자인비: 접수 후 별도 견적</p></div></div><div class="quote-disclaimer">표시된 단가는 참고용이며 작업 범위와 제작 조건에 따라 달라질 수 있습니다. 점주님의 간단한 문의를 위한 기준으로, 주문 접수 후 자세한 견적을 안내드립니다.</div></div>
     <div class="panel price-table-wrap"><div class="panel-head"><div><div class="panel-title">등록된 단가</div><div class="panel-sub">총 ${rows.length}개 조합</div></div></div>${rows.length ? `<div class="price-table"><div class="price-head"><span>품목</span><span>크기</span><span>재질</span><span>매당 단가</span><span>최소 수량</span><span>제주 배송비</span><span>SV 공개</span><span>관리</span></div>${rows.map(p => `<div class="price-row ${p.is_active ? "" : "inactive"}"><strong>${esc(p.product)}</strong><span>${esc(p.size)}</span><span>${esc(p.material)}</span><strong>₩${Number(p.unit_price_krw).toLocaleString("ko-KR")}</strong><span>${Number(p.minimum_quantity) || 1}개</span><span>₩${(Number(p.jeju_shipping_krw) || 0).toLocaleString("ko-KR")}</span><span><button class="toggle-pill ${p.is_active ? "on" : ""}" data-price-active="${p.id}">${p.is_active ? "공개" : "숨김"}</button></span><span class="price-actions"><button class="text-link" data-price-edit="${p.id}">수정</button><button class="text-link danger-text" data-price-delete="${p.id}">삭제</button></span></div>`).join("")}</div>` : `<div class="empty">아직 등록한 단가가 없습니다. 위에서 첫 단가를 추가해보세요.</div>`}</div></section>`;
 }
 
@@ -447,20 +475,24 @@ async function logTime() {
   catch (error) { notify(`시간을 저장하지 못했어요: ${error.message}`); }
 }
 function bindQuoteEvents() {
-  const product = document.getElementById("quote-product"); if (product) product.addEventListener("change", e => { quoteSelection.product = e.target.value; quoteSelection.size = ""; quoteSelection.material = ""; render(); });
-  const size = document.getElementById("quote-size"); if (size) size.addEventListener("change", e => { quoteSelection.size = e.target.value; quoteSelection.material = ""; render(); });
-  const material = document.getElementById("quote-material"); if (material) material.addEventListener("change", e => { quoteSelection.material = e.target.value; render(); });
+  const product = document.getElementById("quote-product"); if (product) product.addEventListener("change", e => { quoteSelection.product = e.target.value; quoteSelection.size = ""; quoteSelection.material = ""; quoteSelection.quantity = quoteMinimumFor(quoteSelection.product, "", ""); render(); });
+  const size = document.getElementById("quote-size"); if (size) size.addEventListener("change", e => { quoteSelection.size = e.target.value; quoteSelection.material = ""; quoteSelection.quantity = quoteMinimumFor(quoteSelection.product, quoteSelection.size, ""); render(); });
+  const material = document.getElementById("quote-material"); if (material) material.addEventListener("change", e => { quoteSelection.material = e.target.value; quoteSelection.quantity = quoteMinimumFor(quoteSelection.product, quoteSelection.size, quoteSelection.material); render(); });
   const delivery = document.getElementById("quote-delivery-area"); if (delivery) delivery.addEventListener("change", e => { quoteSelection.deliveryArea = e.target.value; render(); });
-  const minimumForQuote = () => { const p = db.prices.find(x => x.product === quoteSelection.product && x.size === quoteSelection.size && x.material === quoteSelection.material); return Number(p?.minimum_quantity) || 1; };
+  const designTask = document.getElementById("quote-design-task"); if (designTask) designTask.addEventListener("change", e => { quoteSelection.designTask = e.target.value; render(); });
+  const minimumForQuote = () => quoteMinimumFor(quoteSelection.product, quoteSelection.size, quoteSelection.material);
   const quantity = document.getElementById("quote-quantity"); if (quantity) quantity.addEventListener("change", e => { quoteSelection.quantity = Math.max(minimumForQuote(), Number(e.target.value) || minimumForQuote()); render(); });
   document.querySelectorAll("[data-qty]").forEach(button => button.addEventListener("click", () => { quoteSelection.quantity = Math.max(minimumForQuote(), Number(quoteSelection.quantity) + Number(button.dataset.qty)); render(); }));
   const copy = document.getElementById("copy-quote"); if (copy) copy.addEventListener("click", async () => {
-    const p = db.prices.find(x => x.product === quoteSelection.product && x.size === quoteSelection.size && x.material === quoteSelection.material && x.is_active);
+    const p = db.prices.find(x => x.product === quoteSelection.product && x.size === quoteSelection.size && x.material === quoteSelection.material && (currentProfile.role === "designer" || x.is_active));
     if (!p) return;
     const qty = Math.max(Number(p.minimum_quantity) || 1, Number(quoteSelection.quantity) || 1);
     const fee = quoteSelection.deliveryArea === "제주도" ? Number(p.jeju_shipping_krw) || 0 : 0;
-    const total = Number(p.unit_price_krw) * qty + fee;
-    try { await navigator.clipboard.writeText(`${p.product} ${p.size} ${p.material} ${qty}개${fee ? `, 제주 추가 배송비 ₩${fee.toLocaleString("ko-KR")}` : ""}: ₩${total.toLocaleString("ko-KR")} (부가세·기본 배송 포함)`); notify("견적 내용을 복사했어요."); }
+    const task = DESIGN_FEE_ITEMS.find(item => item.id === quoteSelection.designTask) || DESIGN_FEE_ITEMS[0];
+    const production = Number(p.unit_price_krw) * qty + fee;
+    const total = production + (task.fee === null ? 0 : task.fee);
+    const estimate = task.fee === null ? `제작비 소계 ₩${production.toLocaleString("ko-KR")} · 디자인비 접수 후 별도 견적` : `간편 견적 ₩${total.toLocaleString("ko-KR")} (디자인비 ₩${task.fee.toLocaleString("ko-KR")} 포함)`;
+    try { await navigator.clipboard.writeText(`${p.product} ${p.size} ${p.material} ${qty}개 · ${task.level} ${task.name}${fee ? ` · 제주 추가 배송비 ₩${fee.toLocaleString("ko-KR")}` : ""}: ${estimate} (부가세·기본 배송 포함)\n점주님 간단 문의용 참고 견적이며, 실제 금액은 작업·제작 조건에 따라 달라질 수 있습니다. 주문 접수 후 상세 견적을 안내드립니다.`); notify("견적 내용을 복사했어요."); }
     catch { notify("이 브라우저에서는 복사할 수 없습니다."); }
   });
 }
