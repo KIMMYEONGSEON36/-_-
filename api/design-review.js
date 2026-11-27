@@ -11,6 +11,13 @@ function json(res, status, body) {
   res.status(status).send(JSON.stringify(body));
 }
 function encodePath(value) { return String(value).split("/").map(encodeURIComponent).join("/"); }
+function isArchiveObjectPath(value) {
+  const path = String(value || "");
+  // Existing archive rows use both the original English folder and the
+  // Korean folder name entered in Supabase Storage. Keep access limited to a
+  // single file directly inside either archive folder.
+  return /^(?:archive|아카이브)\/[^/]+$/.test(path) && !path.includes("..") && !path.includes("\\");
+}
 function tokenHash(token) { return crypto.createHash("sha256").update(token).digest("hex"); }
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml", "application/pdf", "application/postscript", "image/vnd.adobe.photoshop"]);
 function headers(prefer) {
@@ -162,7 +169,7 @@ module.exports = async function handler(req, res) {
 
     if (action === "archive_file_link") {
       const path = String(req.body?.path || "");
-      if (!path.startsWith("archive/") || path.includes("..")) return json(res, 400, { error: "파일 경로가 올바르지 않습니다." });
+      if (!isArchiveObjectPath(path)) return json(res, 400, { error: "파일 경로가 올바르지 않습니다." });
       const encoded = encodeURIComponent(path);
       const thumbnail = await one(`/rest/v1/design_archive?select=id&thumbnail_path=eq.${encoded}&is_active=eq.true&limit=1`);
       if (!thumbnail) {
