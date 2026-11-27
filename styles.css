@@ -379,3 +379,8 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
 
 .catalog-single-unit-toggle { display: flex; align-items: center; gap: 8px; min-height: 39px; cursor: pointer; }
 .catalog-single-unit-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #3568e8; }
+
+.request-status-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.catalog-side-options { display: flex; align-items: center; gap: 16px; min-height: 39px; }
+.catalog-side-options label { display: inline-flex; align-items: center; gap: 6px; color: #52606d; font-size: 11px; }
+.catalog-side-options input { accent-color: #3568e8; }
