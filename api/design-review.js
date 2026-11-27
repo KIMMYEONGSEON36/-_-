@@ -44,7 +44,7 @@ async function requireStaff(req) {
   // Read the caller's own profile with their access token. The profile owner
   // RLS policy already allows this, and it avoids relying on elevated table
   // grants for the server key just to identify the staff role.
-  const profileResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=user_id,role&user_id=eq.${encodeURIComponent(user.id)}&limit=1`, {
+  const profileResponse = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=user_id,role,display_name&user_id=eq.${encodeURIComponent(user.id)}&limit=1`, {
     headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${bearer}` }
   });
   const profiles = await profileResponse.json().catch(() => null);
@@ -160,7 +160,35 @@ module.exports = async function handler(req, res) {
       return json(res, 200, { ok: true, status: decision, feedback: feedback || null });
     }
 
+    if (action === "archive_file_link") {
+      const path = String(req.body?.path || "");
+      if (!path.startsWith("archive/") || path.includes("..")) return json(res, 400, { error: "파일 경로가 올바르지 않습니다." });
+      const encoded = encodeURIComponent(path);
+      const thumbnail = await one(`/rest/v1/design_archive?select=id&thumbnail_path=eq.${encoded}&is_active=eq.true&limit=1`);
+      if (!thumbnail) {
+        const profile = await requireStaff(req);
+        if (profile.role !== "designer") return json(res, 403, { error: "원본 파일은 디자인팀만 열 수 있습니다." });
+        const original = await one(`/rest/v1/design_archive?select=id&original_path=eq.${encoded}&is_active=eq.true&limit=1`);
+        if (!original) return json(res, 404, { error: "활성 디자인 자료에서 파일을 찾을 수 없습니다." });
+      }
+      const signed = await db(`/storage/v1/object/sign/${BUCKET}/${encodePath(path)}`, { method: "POST", body: { expiresIn: 3600, download: false } });
+      const url = signed?.signedURL || signed?.signedUrl;
+      if (!url) throw new Error("파일 링크를 만들지 못했습니다.");
+      return json(res, 200, { url: url.startsWith("http") ? url : `${SUPABASE_URL}/storage/v1${url.startsWith("/") ? url : `/${url}`}` });
+    }
     const profile = await requireStaff(req);
+    if (action === "delete_request") {
+      const requestId = String(req.body?.request_id || "");
+      if (!requestId) return json(res, 400, { error: "요청 번호가 필요합니다." });
+      const request = await one(`/rest/v1/requests?select=id,requested_by,requester&id=eq.${encodeURIComponent(requestId)}&limit=1`);
+      if (!request) return json(res, 404, { error: "요청을 찾을 수 없습니다." });
+      const isOwner = request.requested_by === profile.user_id || (!request.requested_by && request.requester === profile.display_name);
+      if (profile.role !== "designer" && !(profile.role === "sv" && isOwner)) return json(res, 403, { error: "디자인팀 또는 요청자 본인만 요청을 삭제할 수 있습니다." });
+      const files = await db(`/rest/v1/design_files?select=object_path&request_id=eq.${encodeURIComponent(requestId)}`);
+      if (files?.length) await db(`/storage/v1/object/${BUCKET}`, { method: "DELETE", body: { prefixes: files.map(file => file.object_path) } });
+      await db(`/rest/v1/requests?id=eq.${encodeURIComponent(requestId)}`, { method: "DELETE", prefer: "return=minimal" });
+      return json(res, 200, { ok: true });
+    }
     if (action === "file_link") {
       const file = await one(`/rest/v1/design_files?select=id,request_id,object_path,file_name&id=eq.${encodeURIComponent(String(req.body?.file_id || ""))}&limit=1`);
       if (!file) return json(res, 404, { error: "파일을 찾을 수 없습니다." });

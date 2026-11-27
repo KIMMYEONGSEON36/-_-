@@ -124,6 +124,7 @@
       const response = await fetch(ticket.upload_url, { method: "PUT", headers: { "Content-Type": mimeType }, body: file });
       if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(payload.message || "파일 업로드에 실패했습니다."); }
       await this.backend("design-review", { action: "guest_register", request_id: requestId, object_path: ticket.object_path, file_name: file.name, mime_type: mimeType, size_bytes: file.size }, true);
+      return ticket.object_path;
     },
     async insert(table, value, isPublic = false) {
       return api(`/rest/v1/${table}`, { method: "POST", body: value, prefer: "return=minimal", public: isPublic });
@@ -133,6 +134,9 @@
     },
     async remove(table, id) {
       return api(`/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", prefer: "return=minimal" });
+    },
+    async rpc(name, args, isPublic = false) {
+      return api(`/rest/v1/rpc/${encodeURIComponent(name)}`, { method: "POST", body: args, prefer: "return=representation", public: isPublic });
     }
   };
 })();

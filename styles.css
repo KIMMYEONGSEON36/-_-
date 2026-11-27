@@ -375,6 +375,53 @@ h1 { margin: 7px 0 6px; font-size: 25px; line-height: 1.25; letter-spacing: -.8p
 .price-tier-field textarea { width: 100%; padding: 10px; border: 1px solid #e1e6ed; border-radius: 7px; resize: vertical; font: inherit; font-size: 11px; line-height: 1.6; }
 .price-tier-field .helper { margin-top: 6px; }
 
+.master-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
+.master-list { margin-top: 18px; border-top: 1px solid #edf0f3; }
+.master-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto auto auto; gap: 12px; align-items: center; padding: 13px 4px; border-bottom: 1px solid #edf0f3; font-size: 12px; }
+.master-row small { display: block; margin-top: 4px; color: #718096; }
+.master-row .badge { white-space: nowrap; }
+.request-item-card, .task-note, .sv-task-card, .cart-row { padding: 13px; margin-top: 10px; border: 1px solid #e8edf3; border-radius: 10px; background: #fbfcfe; }
+.request-item-card > div, .request-item-card > small { display: block; margin-top: 6px; color: #66758a; }
+.request-item-card p { white-space: pre-wrap; margin: 8px 0 0; }
+.task-note strong { font-size: 11px; }
+.task-note p { margin: 7px 0; white-space: pre-wrap; }
+.task-note small, .sv-task-card small { color: #718096; }
+.task-note-form { display: grid; gap: 9px; margin-top: 16px; }
+.task-note-form textarea { width: 100%; min-height: 90px; padding: 10px; border: 1px solid #e1e6ed; border-radius: 7px; font: inherit; }
+.task-admin-table { overflow-x: auto; }
+.task-admin-head, .task-admin-row { min-width: 1020px; display: grid; grid-template-columns: 1.3fr 1.2fr .55fr 1.3fr .65fr 1fr .8fr; gap: 10px; align-items: center; padding: 12px; border-bottom: 1px solid #edf0f3; font-size: 11px; }
+.task-admin-head { font-weight: 700; color: #718096; }
+.task-admin-row small { display: block; margin-top: 4px; color: #718096; }
+.task-admin-row select { min-width: 88px; }
+.sv-task-cards { display: grid; gap: 8px; }
+.sv-task-card > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sv-task-card small { display: block; margin-top: 7px; }
+.archive-preview { display: grid; justify-items: start; gap: 7px; margin: 10px 0 18px; padding: 13px; border: 1px solid #e8edf3; border-radius: 10px; }
+.archive-preview img { display: block; max-width: min(100%, 320px); max-height: 260px; object-fit: contain; border-radius: 7px; background: #f4f6f8; }
+.form-steps { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 22px; color: #8a97a8; font-size: 11px; }
+.form-steps span { flex: 1; padding-bottom: 9px; border-bottom: 2px solid #e7ebf0; }
+.form-steps span.active { color: #315fca; border-color: #315fca; font-weight: 700; }
+.form-step-title { margin: 0 0 6px; }
+.form-step-desc { color: #718096; margin: 0 0 16px; font-size: 12px; }
+.cart-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.cart-row small { display: block; color: #718096; margin-top: 5px; }
+.choice-card.selected { border-color: #3568e8; background: #f2f6ff; }
+.btn.danger { color: #b42318; border-color: #efc4c0; }
+.danger-text { color: #b42318 !important; }
+
+@media (max-width: 767px) {
+  .master-row { grid-template-columns: minmax(0,1fr) auto auto; gap: 8px; }
+  .master-row > button[data-master-edit] { grid-column: 2; }
+  .master-row > button[data-master-toggle] { grid-column: 3; }
+  .master-row > button[data-master-delete] { grid-column: 3; }
+  .task-admin-table { overflow: visible; background: transparent; padding: 0; }
+  .task-admin-head { display: none; }
+  .task-admin-row { min-width: 0; grid-template-columns: 1fr 1fr; gap: 7px; margin: 10px 0; padding: 13px; border: 1px solid #e8edf3; border-radius: 10px; background: white; }
+  .task-admin-row > div:first-child, .task-admin-row > div:nth-child(2), .task-admin-row > div:nth-child(4) { grid-column: 1 / -1; }
+  .cart-row { flex-direction: column; }
+  .form-steps { font-size: 10px; }
+}
+
 .quantity-control select { flex: 1; min-width: 0; height: 100%; border: 0; text-align: center; font-size: 12px; }
 
 .catalog-single-unit-toggle { display: flex; align-items: center; gap: 8px; min-height: 39px; cursor: pointer; }

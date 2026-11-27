@@ -1,6 +1,6 @@
 const today = new Date();
 const isoDay = (offset = 0) => { const d = new Date(today); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10); };
-let db = { requests: [], tasks: [], timeLogs: [], prices: [], requestProducts: [], files: [], reviews: [] };
+let db = { requests: [], tasks: [], timeLogs: [], prices: [], requestProducts: [], files: [], reviews: [], requestItems: [], brands: [], masterItems: [], masterOptions: [], designArchive: [], taskNotes: [] };
 const reviewToken = new URLSearchParams(window.location.search).get("review") || "";
 let route = reviewToken ? "public-review" : new URLSearchParams(window.location.search).get("request") === "1" ? "request-form" : "dashboard";
 let selectedRequest = null;
@@ -20,6 +20,12 @@ let savedTaskRows = new Map();
 let priceEditId = null;
 let requestProductEditId = null;
 let requestCatalogAvailable = false;
+let requestCart = [];
+let requestDraft = { requestType: "NEW", brandId: "", store: "", requester: "", title: "", purpose: "", details: "", deadline: "" };
+let cartDraft = {};
+let cartEditIndex = -1;
+let masterEdit = { type: "", id: "" };
+let masterTab = "brands";
 let quoteSelection = { product: "", size: "", material: "", printSide: "단면", quantity: 1, deliveryArea: "기본 배송", designTask: "print_only" };
 const DESIGN_FEE_ITEMS = [
   { id: "print_only", level: "인쇄만", name: "기존 시안으로 인쇄", fee: 0, description: "디자인 작업 없이 준비된 시안으로 인쇄합니다." },
@@ -38,19 +44,25 @@ let fileUploadError = "";
 function rowRequest(r) {
   return { id: r.id, requested_by: r.requested_by ?? (currentProfile?.role === "sv" ? currentUser?.id : null), title: r.title, type: r.type, brand: r.brand, store: r.store || null, requester: r.requester, contact: r.contact || null, created: r.created, deadline: r.deadline || null, status: r.status, priority: r.priority, purpose: r.purpose, details: r.details, product: r.product || null, quantity: r.quantity || null, ...(requestCatalogAvailable ? { print_side: r.print_side || "단면" } : {}), use: r.use || null, reference: r.reference || null, ai: r.ai || null };
 }
-function rowTask(t) { return { id: t.id, request_id: t.requestId, name: t.name, step: t.step, brand: t.brand, due: t.due || null, status: t.status, priority: t.priority, estimate: Number(t.estimate) || 0, actual: Number(t.actual) || 0 }; }
+function rowTask(t) { return { id: t.id, request_id: t.requestId, name: t.name, step: t.step, brand: t.brand, due: t.due || null, status: t.status, priority: t.priority, estimate: Number(t.estimate) || 0, actual: Number(t.actual) || 0, completed_at: t.completedAt || null }; }
 function mapRequest(r) { return { ...r, created: String(r.created || "").slice(0,10), deadline: r.deadline ? String(r.deadline).slice(0,10) : "", ai: r.ai || { summary: "", missing: [], steps: [] } }; }
-function mapTask(t) { return { id: t.id, requestId: t.request_id, name: t.name, step: t.step, brand: t.brand, due: t.due ? String(t.due).slice(0,10) : "", status: t.status, priority: t.priority, estimate: t.estimate, actual: t.actual }; }
+function mapTask(t) { return { id: t.id, requestId: t.request_id, name: t.name, step: t.step, brand: t.brand, due: t.due ? String(t.due).slice(0,10) : "", status: t.status, priority: t.priority, estimate: t.estimate, actual: t.actual, completedAt: t.completed_at || null }; }
 function mapTimeLog(l) { return { id: l.id, taskId: l.task_id, minutes: l.minutes, note: l.note || "", date: String(l.date || "").slice(0,10) }; }
 async function loadWorkspaceData() {
   const prices = await DesignFlowData.select("price_items", currentProfile.role === "sv" ? { is_active: "eq.true" } : {}, "product.asc,size.asc,material.asc");
   db.prices = prices || [];
-  const [requests, tasks, logs, files, reviews] = await Promise.all([
+  const [requests, tasks, logs, files, reviews, requestItems, brands, masterItems, masterOptions, designArchive, taskNotes] = await Promise.all([
     DesignFlowData.select("requests", {}, "created.desc"),
     DesignFlowData.select("tasks", {}, "due.asc"),
     currentProfile.role === "designer" ? DesignFlowData.select("time_logs", {}, "date.desc") : Promise.resolve([]),
     DesignFlowData.select("design_files", {}, "created_at.desc"),
-    currentProfile.role === "designer" ? DesignFlowData.select("design_reviews", {}, "created_at.desc") : Promise.resolve([])
+    currentProfile.role === "designer" ? DesignFlowData.select("design_reviews", {}, "created_at.desc") : Promise.resolve([]),
+    DesignFlowData.select("request_items", {}, "created_at.asc").catch(() => []),
+    DesignFlowData.select("master_brands", currentProfile.role === "sv" ? { is_active: "eq.true" } : {}, "sort_order.asc,name.asc").catch(() => []),
+    DesignFlowData.select("master_items", currentProfile.role === "sv" ? { is_active: "eq.true" } : {}, "sort_order.asc,name.asc").catch(() => []),
+    DesignFlowData.select("master_options", currentProfile.role === "sv" ? { is_active: "eq.true" } : {}, "sort_order.asc,name.asc").catch(() => []),
+    DesignFlowData.select("design_archive", currentProfile.role === "sv" ? { is_active: "eq.true" } : {}, "sort_order.asc,design_name.asc").catch(() => []),
+    DesignFlowData.select("task_notes", {}, "created_at.desc").catch(() => [])
   ]);
   let requestProducts = [];
   try { requestProducts = await DesignFlowData.select("request_products", currentProfile.role === "sv" ? { is_active: "eq.true" } : {}, "product.asc"); requestCatalogAvailable = true; } catch { requestCatalogAvailable = false; /* Existing projects need the matching database migration. */ }
@@ -59,9 +71,24 @@ async function loadWorkspaceData() {
   db.timeLogs = (logs || []).map(mapTimeLog);
   db.files = files || [];
   db.reviews = reviews || [];
+  db.requestItems = requestItems || [];
+  db.brands = brands || [];
+  db.masterItems = masterItems || [];
+  db.masterOptions = masterOptions || [];
+  db.designArchive = designArchive || [];
+  db.taskNotes = taskNotes || [];
   db.requestProducts = requestProducts || [];
   savedRequestRows = new Map(db.requests.map(r => [r.id, JSON.stringify(rowRequest(r))]));
   savedTaskRows = new Map(db.tasks.map(t => [t.id, JSON.stringify(rowTask(t))]));
+}
+async function loadPublicRequestMasters() {
+  const [brands,items,options,archive]=await Promise.all([
+    DesignFlowData.select("master_brands",{is_active:"eq.true"},"sort_order.asc,name.asc"),
+    DesignFlowData.select("master_items",{is_active:"eq.true"},"sort_order.asc,name.asc"),
+    DesignFlowData.select("master_options",{is_active:"eq.true"},"sort_order.asc,name.asc"),
+    DesignFlowData.select("design_archive",{is_active:"eq.true"},"sort_order.asc,design_name.asc")
+  ]);
+  db.brands=brands||[];db.masterItems=items||[];db.masterOptions=options||[];db.designArchive=archive||[];
 }
 async function saveData() {
   if (currentProfile?.role !== "designer") return;
@@ -94,28 +121,28 @@ function syncRequestStatusesFromTasks() {
     const linked = db.tasks.filter(t => t.requestId === r.id);
     if (!linked.length) continue;
     if (linked.every(t => t.status === "완료")) r.status = "완료";
-    else if (linked.every(t => t.status === "보류")) r.status = "보류";
     else if (r.status === "완료" || r.status === "보류") r.status = "작업 진행";
   }
 }
 function esc(value = "") { return String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function dateLabel(value) { if (!value) return "미정"; const d = new Date(`${value}T00:00:00`); return `${d.getMonth() + 1}월 ${d.getDate()}일`; }
+function completedAtLabel(task) { return task.status === "완료" ? (task.completedAt ? new Date(task.completedAt).toLocaleString("ko-KR") : "기록 없음 (기존 완료 건)") : "미완료"; }
 function dayDiff(value) { if (!value) return 999; return Math.ceil((new Date(`${value}T00:00:00`) - new Date(`${isoDay()}T00:00:00`)) / 86400000); }
-function statusClass(status) { return ({ "접수": "blue", "검토 중": "blue", "정보 요청": "amber", "분석 완료": "purple", "작업 진행": "blue", "시안 확인": "purple", "수정 요청": "amber", "디자인 승인": "green", "완료": "green", "보류": "amber", "진행 중": "blue", "검토": "purple", "대기": "", "보류 중": "amber" })[status] || ""; }
+function statusClass(status) { return ({ "접수": "blue", "확인": "purple", "작업중": "blue", "검토 중": "blue", "정보 요청": "amber", "분석 완료": "purple", "작업 진행": "blue", "시안 확인": "purple", "수정 요청": "amber", "디자인 승인": "green", "완료": "green", "보류": "amber", "진행 중": "blue", "검토": "purple", "대기": "", "보류 중": "amber" })[status] || ""; }
 function priorityClass(priority) { return ({ "긴급": "red", "높음": "amber", "보통": "blue", "낮음": "" })[priority] || ""; }
 function badge(text, cls = statusClass(text)) { return `<span class="badge ${cls}">${esc(text)}</span>`; }
 function notify(message) { const old = document.querySelector(".toast"); if (old) old.remove(); const node = document.createElement("div"); node.className = "toast"; node.textContent = message; document.body.append(node); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.remove(), 2600); }
-function go(next, data = null) { route = next; if (next === "request-detail") selectedRequest = data; if (next === "task-detail") selectedTask = data; window.scrollTo(0, 0); render(); }
+function go(next, data = null) { if (currentProfile?.role === "sv" && ["tasks","task-detail","calendar","prices","master-data"].includes(next)) next = "requests"; route = next; if (next === "request-detail") selectedRequest = data; if (next === "task-detail") selectedTask = data; window.scrollTo(0, 0); render(); }
 
 function layout(content) {
-  const designerItems = [["dashboard", "◫", "대시보드"], ["requests", "▤", "요청 관리"], ["tasks", "☷", "작업 관리"], ["calendar", "▦", "일정"], ["quote", "₩", "견적 확인"], ["prices", "⊞", "단가표 관리"]];
+  const designerItems = [["dashboard", "◫", "대시보드"], ["requests", "▤", "요청 관리"], ["tasks", "☷", "작업 관리"], ["calendar", "▦", "일정"], ["master-data", "⚙", "운영 데이터 관리"], ["quote", "₩", "견적 확인"], ["prices", "⊞", "단가표 관리"]];
   const navItems = currentProfile?.role === "designer" ? designerItems : [["quote", "₩", "견적 확인"], ["requests", "▤", "요청 진행상황"]];
   const current = route === "request-form" || route === "request-success" ? "request-form" : route;
   const displayName = currentProfile?.display_name || "직원";
   const avatarName = displayName.slice(0, 1);
   return `<div class="shell"><aside class="sidebar" id="sidebar"><div class="brand"><div class="brand-mark">D</div><div><div class="brand-name">Design Flow</div><div class="brand-caption">DESIGN WORKSPACE</div></div></div><div class="nav-label">${currentProfile?.role === "designer" ? "DESIGNER WORKSPACE" : "SV WORKSPACE"}</div><nav class="nav">${navItems.map(([key, icon, label]) => `<button class="nav-item ${current === key ? "active" : ""}" data-go="${key}"><span class="nav-icon">${icon}</span>${label}</button>`).join("")}<button class="nav-item ${current === "request-form" ? "active" : ""}" data-go="request-form"><span class="nav-icon">＋</span>새 작업 요청</button></nav><div class="sidebar-bottom"><div class="demo-note"><strong>공용 데이터 연결</strong><span>요청과 단가가 승인된 계정에 공유됩니다.<br>제주 배송 추가 비용은 단가 설정에 따릅니다.</span></div><div class="user-chip"><div class="avatar">${esc(avatarName)}</div><div><div class="user-name">${esc(displayName)}</div><div class="user-role">${currentProfile?.role === "designer" ? "디자이너" : "SV"}</div></div></div></div></aside><main class="main"><header class="topbar"><div class="crumb-wrap"><button class="mobile-menu" id="menu-toggle" aria-label="메뉴 열기">☰</button><div class="crumb">워크스페이스　/　${routeTitle()}</div></div><div class="top-actions"><button class="btn small" id="sign-out">로그아웃</button><div class="avatar">${esc(avatarName)}</div></div></header>${workspaceError ? `<div class="workspace-alert">${esc(workspaceError)}</div>` : ""}${content}<div class="footer-note">Design Flow · 공용 데이터 공간</div></main></div>`;
 }
-function routeTitle() { if (route === "requests" && currentProfile?.role === "sv") return "요청 진행상황"; return ({ dashboard: "대시보드", requests: "요청 관리", "request-detail": "요청 상세", "request-form": "새 요청 접수", "request-success": "접수 완료", tasks: "작업 관리", "task-detail": "작업 상세", calendar: "일정", quote: "견적 확인", prices: "단가표 관리" })[route] || "대시보드"; }
+function routeTitle() { if (route === "requests" && currentProfile?.role === "sv") return "요청 진행상황"; return ({ dashboard: "대시보드", requests: "요청 관리", "request-detail": "요청 상세", "request-form": "새 요청 접수", "request-success": "접수 완료", tasks: "작업 관리", "task-detail": "작업 상세", calendar: "일정", quote: "견적 확인", prices: "단가표 관리", "master-data": "운영 데이터 관리" })[route] || "대시보드"; }
 function head(eyebrow, title, desc, action = "") { return `<div class="page-head"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><div class="subhead">${desc}</div></div>${action}</div>`; }
 
 function publicLayout(content) {
@@ -231,7 +258,7 @@ function pricesPage() {
 
 function dashboard() {
   const pending = db.requests.filter(r => ["접수", "검토 중", "정보 요청"].includes(r.status)).length;
-  const active = db.tasks.filter(t => t.status === "진행 중").length;
+  const active = db.tasks.filter(t => t.status === "작업중").length;
   const overdue = db.tasks.filter(t => dayDiff(t.due) < 0 && t.status !== "완료").length;
   const totalMinutes = db.tasks.reduce((s, t) => s + Number(t.estimate || 0), 0);
   const openReq = [...db.requests].sort((a, b) => a.created < b.created ? 1 : -1).slice(0, 4);
@@ -273,6 +300,22 @@ function requestFilesPanel(request) {
   const kinds = isDesigner ? [["request_attachment", "요청 참고자료"], ["draft", "시안"], ["final", "최종 파일"]] : [["request_attachment", "요청 참고자료"]];
   return `<div class="panel request-files-panel"><div class="panel-head"><div><div class="panel-title">요청 파일과 시안</div><div class="panel-sub">비공개 파일로 보관되며 요청 권한이 있는 사람만 열 수 있습니다.</div></div></div>${reviewHistory.length ? `<div class="review-history">${reviewHistory.map(item => { const responseFiles = files.filter(file => file.review_id === item.id && file.kind === "review_attachment"); const label = item.status === "approved" ? "승인" : item.status === "revision_requested" ? "수정 요청" : item.status === "pending" ? "회신 대기" : "이전 시안"; const stateClass = item.status === "approved" ? "approved" : item.status === "revision_requested" ? "revision" : "pending"; return `<article class="review-history-card ${stateClass}"><div class="review-history-head"><strong>${item.version}차 시안 회신</strong><span class="review-result-badge ${stateClass}">${label}</span></div>${item.feedback ? `<p>${esc(item.feedback)}</p>` : `<p>${item.status === "approved" ? "요청자가 시안을 승인했습니다." : "아직 회신 내용이 없습니다."}</p>`}${responseFiles.length ? `<div class="review-response-files"><strong>요청자 첨부 파일</strong>${responseFiles.map(file => `<div class="attached-file"><strong>${esc(file.file_name)}</strong><button class="btn small" data-file-download="${file.id}">다운로드</button></div>`).join("")}</div>` : ""}<small>${new Date(item.responded_at || item.created_at).toLocaleString("ko-KR")}</small></article>`; }).join("")}</div>` : ""}${files.length ? `<div class="attached-file-list">${files.map(file => { const review = db.reviews.find(item => item.id === file.review_id); return `<div class="attached-file"><div><strong>${esc(file.file_name)}</strong><span>${file.kind === "request_attachment" ? "요청 참고자료" : file.kind === "draft" ? `시안 ${file.version || ""}` : file.kind === "review_attachment" ? "수정 요청 첨부" : "최종 파일"}${review ? ` · ${review.status === "pending" ? "회신 대기" : review.status === "approved" ? "승인" : review.status === "revision_requested" ? "수정 요청" : "새 시안 등록됨"}` : ""}${file.description ? ` · ${esc(file.description)}` : ""}</span></div><button class="btn small" data-file-download="${file.id}">다운로드</button></div>`; }).join("")}</div>` : `<div class="empty">아직 등록된 파일이 없습니다.</div>`}${currentProfile?.role === "designer" ? `<div class="share-link-area">${reviewShareLink ? `<label>요청자 공유 링크</label><div class="share-link-row"><input id="review-share-url" readonly value="${esc(reviewShareLink)}"/><button class="btn small" id="copy-review-link">링크 복사</button></div>` : ""}<button class="btn ${files.some(file => file.kind === "draft" && !file.review_id) ? "primary" : ""}" id="create-review-link" ${files.some(file => file.kind === "draft" && !file.review_id) ? "" : "disabled"}>시안 검토 링크 만들기</button><div class="helper">먼저 시안 파일을 올린 뒤 링크를 만들어 요청자에게 전달하세요. 요청자는 링크에서 승인 또는 수정 요청을 할 수 있습니다.</div></div>` : ""}<form id="detail-file-form" class="detail-file-form"><div class="field"><label for="detail-file-kind">파일 종류</label><select id="detail-file-kind">${kinds.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label for="detail-file-input">파일 선택</label><input id="detail-file-input" type="file" multiple accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf,.ai,.psd" /><div class="helper">이미지·PDF·AI·PSD, 파일당 최대 20MB</div></div><div class="field"><label for="detail-file-description">설명 (선택)</label><input id="detail-file-description" maxlength="300" placeholder="예: 문구 수정한 2차 시안" /></div><button class="btn primary" type="submit">파일 올리기</button></form></div>`;
 }
+function requestItemsPanel(request) {
+  const items=db.requestItems.filter(item=>item.request_id===request?.id).sort((a,b)=>a.sort_order-b.sort_order);
+  if(!items.length)return "";
+  return `<div class="panel request-items-panel"><div class="panel-title">요청 품목 ${items.length}건</div>${items.map(item=>`<article class="request-item-card"><strong>${esc(item.item_name_snapshot||item.design_name_snapshot||"요청 품목")} · ${item.request_type}</strong><div>${esc(item.brand_name_snapshot)} · 수량 ${esc(item.quantity)}${esc(item.quantity_unit_snapshot||"개")} · 희망 ${dateLabel(item.deadline)}</div>${item.design_name_snapshot?`<div>기존 디자인: ${esc(item.design_name_snapshot)}</div>`:""}<small>${esc(archiveSpecsText(item.specifications_snapshot))}</small>${item.modification_types?.length?`<div>수정 항목: ${esc(item.modification_types.join(", "))}</div>`:""}${item.details?`<p>${esc(item.details)}</p>`:""}</article>`).join("")}</div>`;
+}
+function requestTaskNotesPanel(request) {
+  const taskIds=db.tasks.filter(task=>task.requestId===request?.id).map(task=>task.id);
+  const notes=db.taskNotes.filter(note=>taskIds.includes(note.task_id));
+  if(!taskIds.length)return "";
+  const typeNames={internal:"디자인팀 내부 메모",sv_shared:"SV 전달 안내",additional:"추가 요청사항 / 특이사항"};
+  return `<div class="panel task-notes-panel"><div class="panel-title">작업 메모</div>${notes.map(note=>`<article class="task-note"><strong>${typeNames[note.note_type]}</strong><p>${esc(note.content)}</p><small>${esc(note.author_name)} · ${new Date(note.created_at).toLocaleString("ko-KR")}</small></article>`).join("")||`<div class="empty">등록된 작업 메모가 없습니다.</div>`}</div>`;
+}
+function requestTaskStatusPanel(request) {
+  const tasks=db.tasks.filter(task=>task.requestId===request?.id);if(!tasks.length)return "";
+  return `<div class="panel sv-task-cards"><div class="panel-title">작업 진행과 완료 일시</div>${tasks.map(task=>`<article class="sv-task-card"><div><strong>${esc(task.step||task.name)}</strong>${badge(task.status)}</div><small>예정 ${dateLabel(task.due)} · ${esc(task.brand)}</small><small>완료 ${completedAtLabel(task)}</small></article>`).join("")}</div>`;
+}
 
 function reviewDashboardPanel() {
   const newestByRequest = new Map();
@@ -290,7 +333,7 @@ function publicReviewPage() {
 }
 
 const typeOptions = ["신규 제작", "일반 제작", "재주문"];
-function formPage() {
+function oldFormPageDisabled() {
   const isReview = formStep === 2;
   const attachmentPicker = `<div class="field full file-picker"><label for="request-attachments">요청 참고 파일</label><input id="request-attachments" type="file" multiple accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf,.ai,.psd" /><div class="helper">이미지, PDF, AI, PSD 파일을 첨부할 수 있어요. 파일당 최대 20MB, 요청당 최대 10개입니다.</div><div id="request-attachment-names" class="file-name-list">${(form.attachments || []).map(file => esc(file.name)).join(" · ")}</div></div>`;
   const attachmentReview = isReview && form.attachments?.length ? `<div class="review-row"><span>첨부 파일</span><span>${form.attachments.map(file => esc(file.name)).join("<br>")}</span></div>` : "";
@@ -317,23 +360,67 @@ function conditionalFields() {
   if (type === "재주문") return `<div class="field"><label>기존 제작물</label><input id="f-product" value="${esc(form.product || "")}" placeholder="예: 테이블 메뉴판" /></div><div class="field"><label>수량</label><input id="f-quantity" value="${esc(form.quantity || "")}" placeholder="필요한 수량" /></div><div class="field full"><label>변경 사항</label><input id="f-use" value="${esc(form.use || "")}" placeholder="기존과 동일하면 ‘동일’이라고 적어주세요" /></div>`;
   return `<div class="field full"><label>필요한 도움</label><input id="f-use" value="${esc(form.use || "")}" placeholder="예: 어떤 제작물이 적합할지 추천이 필요해요" /></div>`;
 }
+function selectedArchiveItem() { return db.designArchive.find(item => item.id === cartDraft.design_archive_id); }
+function archiveSpecsText(specs = {}) { return Object.entries(specs || {}).map(([key,value]) => `${key}: ${value}`).join(" · ") || "등록된 규격이 없습니다."; }
+function formPage() {
+  const brands = db.brands.filter(item => item.is_active);
+  const purposes = db.masterOptions.filter(item => item.option_type === "purpose" && item.is_active);
+  const archive = db.designArchive.filter(item => item.is_active && (requestDraft.requestType==="MODIFY"||item.is_reorderable) && item.brand_id === requestDraft.brandId);
+  const design = selectedArchiveItem();
+  let inner = "";
+  if (formStep === 0) inner = `<h2 class="form-step-title">요청 정보</h2><p class="form-step-desc">요청 유형을 고르고 브랜드와 연락 정보를 입력해주세요.</p><div class="field-grid"><div class="field full"><label>요청 유형</label><div class="choice-grid">${[["NEW","신규 디자인 제작"],["REORDER","기존 디자인 동일 주문"],["MODIFY","기존 디자인 수정"]].map(([id,label])=>`<button type="button" class="choice-card ${requestDraft.requestType===id?"selected":""}" data-request-mode="${id}"><strong>${label}</strong><span>${id==="NEW"?"새로운 인쇄물 디자인을 요청합니다.":id==="REORDER"?"등록된 시안을 같은 규격으로 다시 주문합니다.":"등록된 시안의 내용이나 이미지를 변경합니다."}</span></button>`).join("")}</div></div><div class="field"><label for="rq-brand">브랜드</label><select id="rq-brand" required><option value="">브랜드 선택</option>${brands.map(b=>`<option value="${b.id}" ${requestDraft.brandId===b.id?"selected":""}>${esc(b.name)}</option>`).join("")}</select></div><div class="field"><label for="rq-store">가맹점명 (선택)</label><input id="rq-store" value="${esc(requestDraft.store)}" placeholder="예: 강남점" /></div><div class="field"><label for="rq-requester">요청자 이름</label><input id="rq-requester" value="${esc(requestDraft.requester)}" required /></div><div class="field"><label for="rq-title">요청 제목</label><input id="rq-title" value="${esc(requestDraft.title)}" placeholder="예: 여름 신메뉴 홍보물" required /></div></div>`;
+  else if (formStep === 1) {
+    const mode = requestDraft.requestType;
+    const common = `<div class="field-grid"><div class="field"><label for="ci-quantity">주문 수량</label><input id="ci-quantity" type="number" min="1" step="1" value="${esc(cartDraft.quantity||"")}" required /></div><div class="field"><label for="ci-deadline">희망 완료일</label><input id="ci-deadline" type="date" min="${isoDay()}" value="${esc(cartDraft.deadline||"")}" required /></div>${mode!=="NEW"?`<div class="field full"><label for="ci-details">${mode==="MODIFY"?"구체적인 변경 내용":"추가 요청사항"}${mode==="MODIFY"?" (필수)":" (선택)"}</label><textarea id="ci-details" rows="4" ${mode==="MODIFY"?"required":""}>${esc(cartDraft.details||"")}</textarea></div>`:""}${mode!=="REORDER"?`<div class="field full"><label for="ci-files">참고 파일 (선택, 최대 10개)</label><input id="ci-files" type="file" multiple accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf,.ai,.psd"/><div class="helper" id="ci-file-names">${(cartDraft.attachments||[]).map(file=>esc(file.name)).join(" · ")}</div></div>`:""}</div>`;
+    let specific = "";
+    if(mode==="NEW") specific = `<div class="field-grid"><div class="field"><label for="ci-item">제작 품목</label><select id="ci-item"><option value="">품목 선택</option>${db.masterItems.filter(i=>i.is_active).map(i=>`<option value="${i.id}" ${cartDraft.master_item_id===i.id?"selected":""}>${esc(i.name)}</option>`).join("")}</select></div><div class="field"><label for="ci-purpose">제작 목적</label><select id="ci-purpose"><option value="">목적 선택</option>${purposes.map(p=>`<option value="${p.id}" ${cartDraft.purpose_id===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div><div class="field full"><label for="ci-details">요청사항 · 메인/서브 문구, 필수 기재 내용</label><textarea id="ci-details" rows="4">${esc(cartDraft.details||"")}</textarea></div></div>`;
+    else specific = `<div class="field"><label for="ci-design">기존 디자인 선택</label><select id="ci-design"><option value="">디자인 검색 및 선택</option>${archive.map(a=>`<option value="${a.id}" ${cartDraft.design_archive_id===a.id?"selected":""}>${esc(a.design_name)} · ${esc(db.masterItems.find(i=>i.id===a.item_id)?.name||"")}</option>`).join("")}</select></div>${design?`<div class="archive-preview"><strong>${esc(design.design_name)}</strong><div>${esc(archiveSpecsText(design.specifications))}</div>${cartDraft.previewUrl?`<img src="${esc(cartDraft.previewUrl)}" alt="${esc(design.design_name)} 썸네일"/>`:design.thumbnail_path?`<button type="button" class="text-link" data-archive-preview="${design.id}">썸네일 보기</button>`:""}${currentProfile?.role==="designer"&&design.original_path?`<button type="button" class="text-link" data-archive-download="${design.id}">원본 파일 열기</button>`:""}</div>`:`<div class="helper">해당 브랜드에 등록된 재주문 가능한 디자인만 표시됩니다.</div>`}${mode==="MODIFY"?`<div class="field full"><label>수정할 항목 (복수 선택)</label><div class="choice-grid">${["가격 변경","문구 변경","이미지 교체","날짜 변경","기타 수정"].map(x=>`<label class="check-row"><input type="checkbox" name="ci-modification" value="${x}" ${(cartDraft.modification_types||[]).includes(x)?"checked":""}/> ${x}</label>`).join("")}</div></div>`:""}`;
+    inner = `<h2 class="form-step-title">요청 품목 ${requestCart.length+1}</h2><p class="form-step-desc">${mode==="NEW"?"신규 제작에 필요한 정보를 적어주세요.":mode==="REORDER"?"재주문할 기존 디자인과 수량을 선택해주세요.":"수정할 디자인과 변경 내용을 적어주세요."}</p><div class="field"><label for="ci-mode">이 품목 요청 유형</label><select id="ci-mode"><option value="NEW" ${mode==="NEW"?"selected":""}>신규 디자인 제작</option><option value="REORDER" ${mode==="REORDER"?"selected":""}>기존 디자인 동일 주문</option><option value="MODIFY" ${mode==="MODIFY"?"selected":""}>기존 디자인 수정</option></select></div>${specific}${common}<div class="form-error" id="form-error"></div><div class="toolbar"><button class="btn primary" type="button" id="cart-add">${cartEditIndex>=0?"품목 변경 저장":"장바구니에 추가"}</button><button class="btn" type="button" id="cart-review">장바구니 확인 (${requestCart.length}건)</button></div>`;
+  } else inner = `<h2 class="form-step-title">요청 내용을 확인해주세요</h2><p class="form-step-desc">한 요청 번호로 ${requestCart.length}개 품목을 함께 접수합니다. 품목별 수량은 각각 표시됩니다.</p><div class="review-list">${requestCart.map((item,index)=>`<div class="cart-row"><div><strong>${index+1}. ${esc(item.item_name_snapshot||item.design_name_snapshot||"신규 요청")}</strong><div>${item.request_type} · ${esc(item.quantity)}${esc(item.quantity_unit_snapshot||"개")} · 완료 희망 ${dateLabel(item.deadline)}</div><small>${esc(item.details||archiveSpecsText(item.specifications_snapshot))}</small></div><div><button type="button" class="text-link" data-cart-edit="${index}">수정</button> <button type="button" class="text-link danger-text" data-cart-remove="${index}">삭제</button></div></div>`).join("")}</div><div class="form-error" id="form-error"></div>`;
+  return `<section class="page"><div class="form-shell">${head("REQUEST PORTAL","디자인 요청 접수","신규 제작, 재주문, 기존 디자인 수정 요청을 품목별로 담아주세요.")}<div class="panel form-card">${!brands.length?`<div class="workspace-alert">${esc(workspaceError||"요청용 브랜드 데이터가 없습니다. 디자이너가 운영 데이터와 DB 마이그레이션을 확인해주세요.")}</div>`:""}<div class="form-steps"><span class="${formStep===0?"active":""}">01 요청자</span><span class="${formStep===1?"active":""}">02 품목 입력</span><span class="${formStep===2?"active":""}">03 접수 확인</span></div>${inner}<div class="form-footer">${formStep>0?`<button class="btn" id="form-back">← 이전</button>`:`<span></span>`}<button class="btn primary" id="form-next">${formStep===2?"요청 제출하기　→":"다음　→"}</button></div></div></div></section>`;
+}
 function successPage() {
-  const returnRoute = currentProfile?.role === "sv" ? "requests" : "dashboard";
-  const returnLabel = currentProfile?.role === "sv" ? "요청 진행상황 보기" : "워크스페이스로 돌아가기";
+  const returnRoute = currentProfile?.role === "sv" ? "requests" : currentProfile?.role === "designer" ? "dashboard" : "request-form";
+  const returnLabel = currentProfile?.role === "sv" ? "요청 진행상황 보기" : currentProfile?.role === "designer" ? "워크스페이스로 돌아가기" : "요청 접수하기";
   return `<section class="page"><div class="form-shell"><div class="panel success-state"><div class="success-icon">✓</div><h2>요청이 접수되었어요</h2><p>디자인 담당자가 요청 내용을 확인할 예정입니다.<br>희망 완료일은 검토 후 안내드리며, 확정된 일정은 아닙니다.</p>${fileUploadError ? `<div class="workspace-alert">${esc(fileUploadError)}</div>` : ""}<div class="request-number">${esc(selectedRequest || "DF-00000")}</div><div><button class="btn primary" data-go="${returnRoute}">${returnLabel}</button></div></div></div></section>`;
 }
 
-function tasksPage() {
+function oldTasksPage() {
   let rows = [...db.tasks].sort((a,b) => a.due.localeCompare(b.due));
   if (taskFilter !== "전체") rows = rows.filter(t => t.status === taskFilter);
   const statuses = ["대기", "진행 중", "검토", "완료", "보류"];
   return `<section class="page">${head("TASKS", "작업 관리", `요청에 연결된 작업 ${db.tasks.length}건을 관리합니다.`, `<button class="btn" data-go="requests">요청에서 작업 만들기 →</button>`)}<div class="toolbar"><select class="select" id="task-filter">${["전체", ...statuses].map(v => `<option ${taskFilter === v ? "selected" : ""}>${v}</option>`).join("")}</select><span class="subhead">상태를 목록에서 바로 변경할 수 있어요.</span></div><div class="panel task-table"><div class="task-item"><div>작업 / 단계</div><div>브랜드</div><div>마감일</div><div>예상 시간</div><div>상태</div></div>${rows.map(t => `<div class="task-item" data-task="${t.id}"><div><div class="row-title">${esc(t.name)}</div><div class="task-mobile-meta">${esc(t.brand)} · 마감 ${dateLabel(t.due)}</div><div class="row-meta">${esc(t.step)}　·　${esc(t.id)}</div></div><div>${esc(t.brand)}</div><div>${dateLabel(t.due)}</div><div>${Number(t.estimate) || 0}분</div><div><select class="select-status" data-task-status="${t.id}">${statuses.map(s => `<option ${t.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></div></div>`).join("") || `<div class="empty">표시할 작업이 없습니다.</div>`}</div></section>`;
 }
-function taskDetail() {
+function oldTaskDetail() {
   const t = db.tasks.find(x => x.id === selectedTask) || db.tasks[0];
   if (!t) return `<section class="page">${head("TASK", "작업이 없습니다", "요청을 승인하면 작업을 생성할 수 있습니다.", `<button class="btn" data-go="requests">요청 확인</button>`)}</section>`;
   const logs = db.timeLogs.filter(l => l.taskId === t.id);
   return `<section class="page">${head("TASK DETAIL", t.name, `${t.id}　·　${t.brand}　·　${t.step}`, `<button class="btn" data-go="tasks">← 작업 목록</button>`)}<div class="detail-grid"><div class="panel"><div class="detail-section"><div class="section-label">작업 정보</div><div class="info-grid"><div><div class="info-label">연결 요청</div><div class="info-value">${esc(t.requestId)}</div></div><div><div class="info-label">상태</div><div class="info-value">${badge(t.status)}</div></div><div><div class="info-label">우선순위</div><div class="info-value">${badge(t.priority, priorityClass(t.priority))}</div></div><div><div class="info-label">마감일</div><div class="info-value">${dateLabel(t.due)}</div></div><div><div class="info-label">예상 시간</div><div class="info-value">${Number(t.estimate) || 0}분</div></div><div><div class="info-label">실제 기록</div><div class="info-value">${Number(t.actual) || 0}분</div></div></div></div><div class="detail-section"><div class="section-label">상태 변경</div><select class="select" id="task-detail-status">${["대기", "진행 중", "검토", "완료", "보류"].map(s => `<option ${t.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></div><div class="detail-section"><div class="section-label">시간 기록</div><div class="toolbar"><input class="select" type="number" min="1" id="time-minutes" placeholder="분" style="width:100px"/><input class="select" id="time-note" placeholder="메모 (선택)" style="flex:1"/><button class="btn primary small" id="add-time">기록 추가</button></div>${logs.length ? logs.map(l => `<div class="request-row"><div class="row-title">${Number(l.minutes)}분</div><div class="row-meta">${esc(l.note || "작업 시간")}</div><span class="row-date">${dateLabel(l.date)}</span></div>`).join("") : `<div class="empty">아직 기록된 시간이 없습니다.</div>`}</div></div><div class="panel"><div class="panel-title">작업 체크리스트</div><div class="panel-sub">완료한 단계를 표시해보세요.</div><div class="checklist" style="margin-top:16px"><label class="check-row"><input type="checkbox" ${t.status !== "대기" ? "checked" : ""}/> 자료 및 요청 확인</label><label class="check-row"><input type="checkbox" ${["검토", "완료"].includes(t.status) ? "checked" : ""}/> 디자인 작업</label><label class="check-row"><input type="checkbox" ${t.status === "완료" ? "checked" : ""}/> 최종 확인 및 전달</label></div></div></div></section>`;
+}
+
+function tasksPage() {
+  const statuses=["접수","확인","작업중","완료"];
+  let rows=[...db.tasks].sort((a,b)=>(a.due||"").localeCompare(b.due||""));
+  if(taskFilter!=="전체")rows=rows.filter(task=>task.status===taskFilter);
+  const taskMarkup=task=>{const request=db.requests.find(row=>row.id===task.requestId);const items=db.requestItems.filter(item=>item.request_id===task.requestId);return `<div class="task-admin-row" data-task="${esc(task.id)}"><div><strong>${esc(task.requestId)}</strong><small>${dateLabel(request?.created)} · ${esc(task.brand)} · ${esc(request?.type||"")}</small></div><div>${esc(items.map(item=>item.item_name_snapshot||item.design_name_snapshot).filter(Boolean).join(", ")||request?.product||task.name)}</div><div>${items.length||1}건</div><div>${items.map(item=>`${esc(item.item_name_snapshot||item.design_name_snapshot||"품목")} ${esc(item.quantity)}`).join(" · ")||esc(request?.quantity||"—")}</div><div>${dateLabel(task.due)}</div><div>${task.completedAt?new Date(task.completedAt).toLocaleString("ko-KR"):"—"}</div><div><select class="select-status" data-task-status="${esc(task.id)}">${statuses.map(status=>`<option ${task.status===status?"selected":""}>${status}</option>`).join("")}</select></div></div>`;};
+  return `<section class="page">${head("TASKS","작업 관리",`요청에 연결된 작업 ${db.tasks.length}건을 관리합니다. 완료 시각은 자동 기록됩니다.`,`<button class="btn" data-go="requests">요청에서 작업 만들기 →</button>`)}<div class="toolbar"><select class="select" id="task-filter">${["전체",...statuses].map(status=>`<option ${taskFilter===status?"selected":""}>${status}</option>`).join("")}</select><span class="subhead">상태를 변경하면 SV 진행 현황에 반영됩니다.</span></div><div class="panel task-admin-table"><div class="task-admin-head"><span>요청 번호 · 요청일 · 브랜드 · 유형</span><span>요청 품목</span><span>품목 건수</span><span>품목별 수량</span><span>작업 마감일</span><span>완료일시</span><span>상태 변경</span></div>${rows.map(taskMarkup).join("")||`<div class="empty">표시할 작업이 없습니다.</div>`}</div></section>`;
+}
+function taskDetail() {
+  const task=db.tasks.find(row=>row.id===selectedTask)||db.tasks[0];if(!task)return `<section class="page">${head("TASK","작업이 없습니다","요청을 승인하면 작업을 생성할 수 있습니다.",`<button class="btn" data-go="requests">요청 확인</button>`)}</section>`;
+  const logs=db.timeLogs.filter(log=>log.taskId===task.id),notes=db.taskNotes.filter(note=>note.task_id===task.id),statuses=["접수","확인","작업중","완료"];
+  return `<section class="page">${head("TASK DETAIL",task.name,`${task.requestId} · ${task.brand} · ${task.step}`,`<button class="btn" data-go="tasks">← 작업 목록</button>`)}<div class="detail-grid"><div class="panel"><div class="detail-section"><div class="section-label">작업 정보</div><div class="info-grid"><div><div class="info-label">연결 요청</div><div class="info-value">${esc(task.requestId)}</div></div><div><div class="info-label">현재 상태</div><div class="info-value">${badge(task.status)}</div></div><div><div class="info-label">완료일시</div><div class="info-value">${completedAtLabel(task)}</div></div><div><div class="info-label">마감일</div><div class="info-value">${dateLabel(task.due)}</div></div></div></div><div class="detail-section"><label for="task-detail-status">상태 변경</label><select class="select" id="task-detail-status">${statuses.map(status=>`<option ${task.status===status?"selected":""}>${status}</option>`).join("")}</select></div><div class="detail-section"><div class="section-label">시간 기록</div><div class="toolbar"><input class="select" type="number" min="1" id="time-minutes" placeholder="분" style="width:100px"/><input class="select" id="time-note" placeholder="메모 (선택)" style="flex:1"/><button class="btn primary small" id="add-time">기록 추가</button></div>${logs.map(log=>`<div class="request-row"><div class="row-title">${Number(log.minutes)}분</div><div class="row-meta">${esc(log.note||"작업 시간")}</div><span class="row-date">${dateLabel(log.date)}</span></div>`).join("")||`<div class="empty">아직 기록된 시간이 없습니다.</div>`}</div></div><div class="panel"><div class="panel-title">작업 메모</div><div class="panel-sub">내부 메모는 디자인팀만 볼 수 있고, 공유 메모는 SV 요청 현황에도 표시됩니다.</div>${notes.map(note=>`<article class="task-note"><strong>${note.note_type==="internal"?"디자인팀 내부 메모":note.note_type==="sv_shared"?"SV 전달 안내":"추가 요청사항 / 특이사항"}</strong><p>${esc(note.content)}</p><small>${esc(note.author_name)} · ${new Date(note.created_at).toLocaleString("ko-KR")}</small></article>`).join("")||`<div class="empty">등록된 작업 메모가 없습니다.</div>`}<form id="task-note-form" class="task-note-form"><label for="task-note-type">메모 구분</label><select id="task-note-type"><option value="internal">디자인팀 내부 메모</option><option value="sv_shared">SV 전달 안내 메모</option><option value="additional">추가 요청사항 / 특이사항</option></select><textarea id="task-note-content" rows="4" required placeholder="메모를 입력하세요"></textarea><button class="btn primary" type="submit">메모 저장</button></form></div></div></section>`;
+}
+
+function masterDataPage() {
+  if(currentProfile?.role!=="designer")return `<section class="page">${head("ACCESS","접근할 수 없습니다","운영 데이터는 디자인팀 전용입니다.")}</section>`;
+  const tabs=[["brands","브랜드"],["items","요청 품목"],["archive","기존 디자인"],["options","요청 목적"]];
+  const editing=masterEdit.id?({brands:db.brands,items:db.masterItems,archive:db.designArchive,options:db.masterOptions}[masterEdit.type]||[]).find(row=>row.id===masterEdit.id):null;
+  const masterRows=masterTab==="brands"?db.brands:masterTab==="items"?db.masterItems:masterTab==="options"?db.masterOptions:db.designArchive;
+  let formHtml="";
+  if(masterTab==="archive")formHtml=`<form id="master-form" class="price-form"><div class="field"><label>브랜드</label><select id="md-brand" required><option value="">선택</option>${db.brands.map(b=>`<option value="${b.id}" ${editing?.brand_id===b.id?"selected":""}>${esc(b.name)}</option>`).join("")}</select></div><div class="field"><label>관련 품목</label><select id="md-item"><option value="">선택 안 함</option>${db.masterItems.map(i=>`<option value="${i.id}" ${editing?.item_id===i.id?"selected":""}>${esc(i.name)}</option>`).join("")}</select></div><div class="field full"><label>디자인명</label><input id="md-name" required value="${esc(editing?.design_name||"")}"/></div><div class="field full"><label>제작 규격 (한 줄에 항목: 값)</label><textarea id="md-specs" rows="4">${esc(Object.entries(editing?.specifications||{}).map(([k,v])=>`${k}: ${v}`).join("\n"))}</textarea></div><div class="field"><label>썸네일 이미지</label><input id="md-thumbnail" type="file" accept="image/png,image/jpeg,image/webp"/><small>${esc(editing?.thumbnail_path||"")}</small></div><div class="field"><label>원본 파일</label><input id="md-original" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf,.ai,.psd"/><small>${esc(editing?.original_path||"")}</small></div><div class="field"><label><input id="md-reorderable" type="checkbox" ${editing?.is_reorderable!==false?"checked":""}/> 재주문 가능</label></div><div class="field"><label><input id="md-active" type="checkbox" ${editing?.is_active!==false?"checked":""}/> 사용</label></div><button class="btn primary" type="submit">${editing?"변경 저장":"디자인 등록"}</button>${editing?`<button class="btn" type="button" id="master-cancel">취소</button>`:""}</form>`;
+  else formHtml=`<form id="master-form" class="price-form"><div class="field"><label>${masterTab==="brands"?"브랜드명":masterTab==="items"?"품목명":"요청 목적"}</label><input id="md-name" required maxlength="120" value="${esc(editing?.name||"")}"/></div>${masterTab==="items"?`<div class="field"><label>수량 단위</label><input id="md-unit" required maxlength="20" value="${esc(editing?.quantity_unit||"개")}" placeholder="예: 매, 장, 개"/></div>`:""}<div class="field"><label>정렬 순서</label><input id="md-order" type="number" value="${Number(editing?.sort_order)||0}"/></div><button class="btn primary" type="submit">${editing?"변경 저장":"등록"}</button>${editing?`<button class="btn" type="button" id="master-cancel">취소</button>`:""}</form>`;
+  const rows=masterRows.map(row=>{const label=masterTab==="archive"?`${esc(row.design_name)} · ${esc(db.brands.find(b=>b.id===row.brand_id)?.name||"브랜드 없음")} · ${esc(db.masterItems.find(i=>i.id===row.item_id)?.name||"품목 미지정")}`:esc(row.name);return `<div class="master-row"><div><strong>${label}</strong><small>${masterTab==="archive"?esc(archiveSpecsText(row.specifications)): `정렬 ${Number(row.sort_order)||0}`}</small></div><span class="badge ${row.is_active?"green":""}">${row.is_active?"사용":"비활성"}</span><button class="text-link" data-master-edit="${row.id}">수정</button><button class="toggle-pill ${row.is_active?"on":""}" data-master-toggle="${row.id}">${row.is_active?"사용 중":"비활성"}</button><button class="text-link danger-text" data-master-delete="${row.id}">삭제</button></div>`}).join("");
+  return `<section class="page">${head("MASTER DATA","운영 데이터 관리","요청 접수에 사용하는 목록과 기존 디자인 자료를 직접 관리합니다.")}<div class="master-tabs">${tabs.map(([key,label])=>`<button class="btn ${masterTab===key?"primary":""}" data-master-tab="${key}">${label}</button>`).join("")}</div><div class="panel"><div class="panel-head"><div><div class="panel-title">${tabs.find(t=>t[0]===masterTab)?.[1]} 관리</div><div class="panel-sub">접수에 사용된 자료는 비활성화하면 과거 요청 스냅샷이 보존됩니다.</div></div></div>${formHtml}<div class="master-list">${rows||`<div class="empty">등록된 데이터가 없습니다.</div>`}</div></div></section>`;
 }
 
 function calendarPage() {
@@ -351,10 +438,10 @@ function render() {
     return;
   }
   if (currentProfile?.role === "sv" && !["quote", "requests", "request-detail", "request-form", "request-success"].includes(route)) route = "quote";
-  let content = route === "public-review" ? publicReviewPage() : route === "dashboard" ? dashboard() : route === "requests" ? requestsPage() : route === "request-detail" ? requestDetail() : route === "request-form" ? formPage() : route === "request-success" ? successPage() : route === "tasks" ? tasksPage() : route === "task-detail" ? taskDetail() : route === "calendar" ? calendarPage() : route === "prices" ? pricesPage() : route === "quote" ? quotePage() : dashboard();
+  let content = route === "public-review" ? publicReviewPage() : route === "dashboard" ? dashboard() : route === "requests" ? requestsPage() : route === "request-detail" ? requestDetail() : route === "request-form" ? formPage() : route === "request-success" ? successPage() : route === "tasks" ? tasksPage() : route === "task-detail" ? taskDetail() : route === "calendar" ? calendarPage() : route === "prices" ? pricesPage() : route === "quote" ? quotePage() : route === "master-data" ? masterDataPage() : dashboard();
   if (route === "request-detail" && currentProfile) {
     const request = db.requests.find(item => item.id === selectedRequest);
-    content = content.replace("</section>", `${requestFilesPanel(request)}</section>`);
+    content = content.replace("</section>", `${requestItemsPanel(request)}${requestTaskStatusPanel(request)}${requestTaskNotesPanel(request)}${requestFilesPanel(request)}</section>`);
   }
   if (route === "dashboard" && currentProfile?.role === "designer") content = content.replace('<div class="metrics">', `${reviewDashboardPanel()}<div class="metrics">`);
   app.innerHTML = currentProfile && route !== "public-review" ? layout(content) : publicLayout(content);
@@ -383,7 +470,7 @@ async function initializeApp() {
       try { await loadWorkspaceData(); workspaceError = ""; }
       catch (error) { workspaceError = `로그인은 됐지만 업무 데이터를 불러오지 못했습니다. Supabase의 관련 표 권한을 확인해주세요. (${error.message})`; }
     } else if (!["request-form", "request-success"].includes(route)) route = "login";
-    else if (route === "request-form") { try { db.requestProducts = await DesignFlowData.select("request_products", { is_active: "eq.true" }, "product.asc"); requestCatalogAvailable = true; } catch { requestCatalogAvailable = false; } }
+    else if (route === "request-form") { try { await loadPublicRequestMasters(); } catch(error) { workspaceError = `새 요청 시스템 데이터베이스 마이그레이션 적용이 필요합니다. (${error.message})`; } }
   } catch (error) {
     bootError = `${error.message}. Supabase의 schema.sql 적용 여부를 확인해주세요.`;
   }
@@ -413,14 +500,86 @@ function validateStep() {
   }
   return true;
 }
+function saveRequestHeaderFields() {
+  requestDraft.brandId = document.getElementById("rq-brand")?.value || requestDraft.brandId;
+  requestDraft.store = document.getElementById("rq-store")?.value.trim() || "";
+  requestDraft.requester = document.getElementById("rq-requester")?.value.trim() || "";
+  requestDraft.title = document.getElementById("rq-title")?.value.trim() || "";
+}
+function addCurrentCartItem() {
+  const mode = requestDraft.requestType;
+  const quantity = document.getElementById("ci-quantity")?.value.trim() || "";
+  const deadline = document.getElementById("ci-deadline")?.value || "";
+  const details = document.getElementById("ci-details")?.value.trim() || "";
+  const error = document.getElementById("form-error");
+  if (!Number.isInteger(Number(quantity)) || Number(quantity) < 1 || !deadline) { if(error) error.textContent="수량과 희망 완료일을 입력해주세요."; return false; }
+  const brand = db.brands.find(item=>item.id===requestDraft.brandId);
+  const item = { request_type:mode, brand_id:requestDraft.brandId, brand_name_snapshot:brand?.name||"", quantity, quantity_unit_snapshot:"개", deadline, details, attachments:cartDraft.attachments||[], sort_order:cartEditIndex>=0?cartEditIndex:requestCart.length };
+  if(mode==="NEW") {
+    const selectedItem=db.masterItems.find(row=>row.id===document.getElementById("ci-item")?.value);
+    const purpose=db.masterOptions.find(row=>row.id===document.getElementById("ci-purpose")?.value);
+    if(!selectedItem||!purpose||!details){if(error)error.textContent="품목, 제작 목적, 요청사항을 입력해주세요.";return false;}
+    Object.assign(item,{master_item_id:selectedItem.id,item_name_snapshot:selectedItem.name,quantity_unit_snapshot:selectedItem.quantity_unit||"개",purpose_id:purpose.id,purpose_snapshot:purpose.name,details,modification_types:[],specifications_snapshot:{}});
+  } else {
+    const design=db.designArchive.find(row=>row.id===document.getElementById("ci-design")?.value);
+    if(!design){if(error)error.textContent="기존 디자인을 선택해주세요.";return false;}
+    const selectedItem=db.masterItems.find(row=>row.id===design.item_id);
+    const modifications=[...document.querySelectorAll('[name="ci-modification"]:checked')].map(el=>el.value);
+    if(mode==="MODIFY"&&(!details||!modifications.length)){if(error)error.textContent="변경 항목과 구체적인 변경 내용을 입력해주세요.";return false;}
+    Object.assign(item,{design_archive_id:design.id,master_item_id:design.item_id,item_name_snapshot:selectedItem?.name||"",quantity_unit_snapshot:selectedItem?.quantity_unit||"개",design_name_snapshot:design.design_name,specifications_snapshot:design.specifications||{},purpose_snapshot:"",modification_types:modifications});
+  }
+  item.attachments=cartDraft.attachments||[];
+  if(item.attachments.length>10||item.attachments.some(file=>!getAllowedFileType(file)||file.size>20*1024*1024)){if(error)error.textContent="첨부 파일은 최대 10개, 파일당 20MB이며 이미지/PDF/AI/PSD 형식이어야 합니다.";return false;}
+  if(cartEditIndex>=0) requestCart[cartEditIndex]=item; else requestCart.push(item);
+  cartDraft={}; cartEditIndex=-1; return true;
+}
+function bindRequestFormEvents() {
+  document.querySelectorAll("[data-request-mode]").forEach(el=>el.addEventListener("click",()=>{saveRequestHeaderFields();requestDraft.requestType=el.dataset.requestMode;cartDraft={};render();}));
+  const brand=document.getElementById("rq-brand"); if(brand)brand.addEventListener("change",e=>{saveRequestHeaderFields();requestDraft.brandId=e.target.value;cartDraft={};render();});
+  const add=document.getElementById("cart-add"); if(add)add.addEventListener("click",()=>{saveRequestHeaderFields();if(!addCurrentCartItem())return;render();});
+  const mode=document.getElementById("ci-mode");if(mode)mode.addEventListener("change",e=>{cartDraft.quantity=document.getElementById("ci-quantity")?.value||"";cartDraft.deadline=document.getElementById("ci-deadline")?.value||"";cartDraft.details=document.getElementById("ci-details")?.value||"";cartDraft.attachments=cartDraft.attachments||[];requestDraft.requestType=e.target.value;render();});
+  const design=document.getElementById("ci-design"); if(design)design.addEventListener("change",async e=>{cartDraft.quantity=document.getElementById("ci-quantity")?.value||"";cartDraft.deadline=document.getElementById("ci-deadline")?.value||"";cartDraft.details=document.getElementById("ci-details")?.value||"";cartDraft.modification_types=[...document.querySelectorAll('[name="ci-modification"]:checked')].map(el=>el.value);cartDraft.design_archive_id=e.target.value;cartDraft.previewUrl="";const item=db.designArchive.find(row=>row.id===e.target.value);render();if(item?.thumbnail_path)try{const result=await DesignFlowData.backend("design-review",{action:"archive_file_link",path:item.thumbnail_path},!currentProfile);cartDraft.previewUrl=result.url;render();}catch(error){notify(`썸네일을 불러오지 못했습니다: ${error.message}`);}});
+  const files=document.getElementById("ci-files"); if(files)files.addEventListener("change",e=>{cartDraft.attachments=[...e.target.files];const names=document.getElementById("ci-file-names");if(names)names.textContent=cartDraft.attachments.map(f=>f.name).join(" · ");});
+  const review=document.getElementById("cart-review"); if(review)review.addEventListener("click",()=>{saveRequestHeaderFields();if(!requestCart.length)return notify("먼저 품목을 장바구니에 추가해주세요.");formStep=2;render();});
+  document.querySelectorAll("[data-cart-edit]").forEach(el=>el.addEventListener("click",()=>{cartEditIndex=Number(el.dataset.cartEdit);cartDraft={...requestCart[cartEditIndex]};requestDraft.requestType=cartDraft.request_type;formStep=1;render();}));
+  document.querySelectorAll("[data-cart-remove]").forEach(el=>el.addEventListener("click",()=>{requestCart.splice(Number(el.dataset.cartRemove),1);requestCart.forEach((item,index)=>item.sort_order=index);render();}));
+  document.querySelectorAll("[data-archive-preview],[data-archive-download]").forEach(el=>el.addEventListener("click",async()=>{const id=el.dataset.archivePreview||el.dataset.archiveDownload;const item=db.designArchive.find(row=>row.id===id);const path=el.dataset.archivePreview?item?.thumbnail_path:item?.original_path;if(!path)return;try{const result=await DesignFlowData.backend("design-review",{action:"archive_file_link",path});window.open(result.url,"_blank","noopener");}catch(error){notify(`파일을 열지 못했어요: ${error.message}`);}}));
+  const back=document.getElementById("form-back");if(back)back.addEventListener("click",()=>{if(formStep===2)formStep=1;else formStep=0;render();});
+  const next=document.getElementById("form-next");if(next)next.addEventListener("click",async()=>{if(formStep===0){saveRequestHeaderFields();if(!requestDraft.brandId||!requestDraft.requester||!requestDraft.title)return notify("브랜드, 요청자 이름, 요청 제목을 입력해주세요.");formStep=1;render();}else if(formStep===1){if(!requestCart.length)return notify("품목을 장바구니에 추가해주세요.");formStep=2;render();}else await submitRequest();});
+}
+function parseSpecifications(value) { const result={}; String(value||"").split("\n").forEach(line=>{const pos=line.indexOf(":");if(pos>0){const key=line.slice(0,pos).trim(),val=line.slice(pos+1).trim();if(key&&val)result[key]=val;}});return result; }
+function bindMasterEvents() {
+  document.querySelectorAll("[data-master-tab]").forEach(el=>el.addEventListener("click",()=>{masterTab=el.dataset.masterTab;masterEdit={type:"",id:""};render();}));
+  document.querySelectorAll("[data-master-edit]").forEach(el=>el.addEventListener("click",()=>{masterEdit={type:masterTab,id:el.dataset.masterEdit};render();}));
+  const cancel=document.getElementById("master-cancel");if(cancel)cancel.addEventListener("click",()=>{masterEdit={type:"",id:""};render();});
+  const formEl=document.getElementById("master-form");if(formEl)formEl.addEventListener("submit",async e=>{
+    e.preventDefault();const editing=masterEdit.id?({brands:db.brands,items:db.masterItems,archive:db.designArchive,options:db.masterOptions}[masterEdit.type]||[]).find(row=>row.id===masterEdit.id):null;let table,row;
+    if(masterTab==="archive"){
+      const thumbnail=document.getElementById("md-thumbnail").files[0],original=document.getElementById("md-original").files[0];
+      row={brand_id:document.getElementById("md-brand").value,item_id:document.getElementById("md-item").value||null,design_name:document.getElementById("md-name").value.trim(),specifications:parseSpecifications(document.getElementById("md-specs").value),is_reorderable:document.getElementById("md-reorderable").checked,is_active:document.getElementById("md-active").checked,updated_at:new Date().toISOString(),thumbnail_path:editing?.thumbnail_path||null,original_path:editing?.original_path||null};
+      try{for(const [file,field] of [[thumbnail,"thumbnail_path"],[original,"original_path"]])if(file){const mime=getAllowedFileType(file);if(!mime||file.size>20*1024*1024)throw new Error(`${file.name}: 지원되지 않는 파일이거나 20MB를 초과했습니다.`);const path=`archive/${crypto.randomUUID()}.${storageFileExtension(file)}`;await DesignFlowData.uploadFile(file,path,mime);row[field]=path;}}catch(error){notify(`파일을 올리지 못했습니다: ${error.message}`);return;}
+      table="design_archive";
+    }else{
+      row={name:document.getElementById("md-name").value.trim(),sort_order:Number(document.getElementById("md-order").value)||0,updated_at:new Date().toISOString()};
+      table=masterTab==="brands"?"master_brands":masterTab==="items"?"master_items":"master_options";
+      if(masterTab==="options")row.option_type="purpose";
+      if(masterTab==="items")row.quantity_unit=document.getElementById("md-unit").value.trim();
+    }
+    const button=formEl.querySelector("button[type=submit]");button.disabled=true;
+    try{if(editing)await DesignFlowData.update(table,editing.id,row);else await DesignFlowData.insert(table,{...row,is_active:row.is_active??true});masterEdit={type:"",id:""};await loadWorkspaceData();notify("운영 데이터를 저장했습니다.");render();}
+    catch(error){button.disabled=false;notify(`저장하지 못했습니다: ${error.message}`);}
+  });
+  document.querySelectorAll("[data-master-toggle]").forEach(el=>el.addEventListener("click",async()=>{const source=masterTab==="brands"?db.brands:masterTab==="items"?db.masterItems:masterTab==="options"?db.masterOptions:db.designArchive;const item=source.find(row=>row.id===el.dataset.masterToggle);if(!item)return;const table={brands:"master_brands",items:"master_items",options:"master_options",archive:"design_archive"}[masterTab];try{await DesignFlowData.update(table,item.id,{is_active:!item.is_active,updated_at:new Date().toISOString()});await loadWorkspaceData();render();}catch(error){notify(`변경하지 못했습니다: ${error.message}`);}}));
+  document.querySelectorAll("[data-master-delete]").forEach(el=>el.addEventListener("click",async()=>{const source=masterTab==="brands"?db.brands:masterTab==="items"?db.masterItems:masterTab==="options"?db.masterOptions:db.designArchive;const item=source.find(row=>row.id===el.dataset.masterDelete);if(!item)return;const used=masterTab==="brands"?(db.requestItems.some(row=>row.brand_id===item.id)||db.designArchive.some(row=>row.brand_id===item.id)):masterTab==="items"?(db.requestItems.some(row=>row.master_item_id===item.id)||db.designArchive.some(row=>row.item_id===item.id)):masterTab==="archive"?db.requestItems.some(row=>row.design_archive_id===item.id):false;if(used)return notify("접수 내역 또는 기존 디자인에 사용 중입니다. 비활성화로 관리해주세요.");if(!confirm("이 데이터를 삭제할까요?"))return;try{const table={brands:"master_brands",items:"master_items",options:"master_options",archive:"design_archive"}[masterTab];await DesignFlowData.remove(table,item.id);await loadWorkspaceData();render();}catch(error){notify(`삭제하지 못했습니다: ${error.message}`);}}));
+}
 function bindEvents() {
-  document.querySelectorAll("[data-go]").forEach(el => el.addEventListener("click", () => { if (el.dataset.go === "request-form") { form = {}; formStep = 0; } if (el.dataset.go === "login") route = "login"; go(el.dataset.go); }));
+  document.querySelectorAll("[data-go]").forEach(el => el.addEventListener("click", () => { if (el.dataset.go === "request-form") { form = {}; formStep = 0; requestCart=[]; cartDraft={}; cartEditIndex=-1; requestDraft={ requestType:"NEW", brandId:"", store:"", requester:"", title:"", purpose:"", details:"", deadline:"" }; } if (el.dataset.go === "login") route = "login"; go(el.dataset.go); }));
   document.querySelectorAll("[data-request]").forEach(el => el.addEventListener("click", () => { reviewShareLink = ""; go("request-detail", el.dataset.request); }));
-  document.querySelectorAll("[data-delete-request]").forEach(el => el.addEventListener("click", async e => { e.stopPropagation(); const id = el.dataset.deleteRequest; const request = db.requests.find(row => row.id === id); if (!request || !confirm(`“${request.title}” 요청을 삭제할까요? 연결된 작업과 이력도 삭제됩니다.`)) return; el.disabled = true; try { await DesignFlowData.remove("requests", id); db.requests = db.requests.filter(row => row.id !== id); db.tasks = db.tasks.filter(row => row.requestId !== id); db.files = db.files.filter(row => row.request_id !== id); db.reviews = db.reviews.filter(row => row.request_id !== id); savedRequestRows.delete(id); if (selectedRequest === id) { selectedRequest = null; route = "requests"; } notify("요청을 삭제했어요."); render(); } catch (error) { el.disabled = false; notify(`요청을 삭제하지 못했어요: ${error.message}`); } }));
   document.querySelectorAll("[data-review-request]").forEach(el => el.addEventListener("click", () => { reviewShareLink = ""; go("request-detail", el.dataset.reviewRequest); }));
+  document.querySelectorAll("[data-delete-request]").forEach(el=>el.addEventListener("click",async e=>{e.stopPropagation();const id=el.dataset.deleteRequest,request=db.requests.find(row=>row.id===id);if(!request||!requestDeleteButton(request))return;if(!confirm("요청과 연결된 품목, 작업, 메모, 파일/시안 이력이 함께 삭제됩니다. 이 요청을 삭제할까요?"))return;el.disabled=true;try{await DesignFlowData.backend("design-review",{action:"delete_request",request_id:id});const removedTaskIds=db.tasks.filter(task=>task.requestId===id).map(task=>task.id);db.requests=db.requests.filter(row=>row.id!==id);db.tasks=db.tasks.filter(row=>row.requestId!==id);db.requestItems=db.requestItems.filter(row=>row.request_id!==id);db.files=db.files.filter(row=>row.request_id!==id);db.reviews=db.reviews.filter(row=>row.request_id!==id);db.taskNotes=db.taskNotes.filter(row=>!removedTaskIds.includes(row.task_id));savedRequestRows.delete(id);if(selectedRequest===id){selectedRequest=null;route="requests";}notify("요청과 연결 자료를 삭제했습니다.");render();}catch(error){el.disabled=false;notify(`삭제하지 못했습니다: ${error.message}`);}}));
   document.querySelectorAll("[data-task]:not([data-task-status])").forEach(el => el.addEventListener("click", e => { if (e.target.closest("select")) return; go("task-detail", el.dataset.task); }));
   const menu = document.getElementById("menu-toggle"); if (menu) menu.addEventListener("click", () => document.getElementById("sidebar").classList.toggle("open"));
-  const logout = document.getElementById("sign-out"); if (logout) logout.addEventListener("click", async () => { await DesignFlowData.signOut(); currentUser = null; currentProfile = null; db = { requests: [], tasks: [], timeLogs: [], prices: [], requestProducts: [], files: [], reviews: [] }; route = "login"; render(); });
+  const logout = document.getElementById("sign-out"); if (logout) logout.addEventListener("click", async () => { await DesignFlowData.signOut(); currentUser = null; currentProfile = null; db = { requests: [], tasks: [], timeLogs: [], prices: [], requestProducts: [], files: [], reviews: [], requestItems: [], brands: [], masterItems: [], masterOptions: [], designArchive: [], taskNotes: [] }; route = "login"; render(); });
   const loginForm = document.getElementById("login-form"); if (loginForm) loginForm.addEventListener("submit", async e => {
     e.preventDefault(); const error = document.getElementById("login-error"); const button = loginForm.querySelector("button[type=submit]"); button.disabled = true; error.textContent = "로그인 중…";
     try {
@@ -436,12 +595,16 @@ function bindEvents() {
   const search = document.getElementById("request-search"); if (search) search.addEventListener("input", e => { searchTerm = e.target.value; const pos = e.target.selectionStart; render(); const next = document.getElementById("request-search"); next.focus(); next.setSelectionRange(pos,pos); });
   const filter = document.getElementById("request-filter"); if (filter) filter.addEventListener("change", e => { requestFilter = e.target.value; render(); });
   const tf = document.getElementById("task-filter"); if (tf) tf.addEventListener("change", e => { taskFilter = e.target.value; render(); });
-  document.querySelectorAll("[data-task-status]").forEach(el => el.addEventListener("change", async e => { const t = db.tasks.find(x => x.id === e.target.dataset.taskStatus); if (t) { const previous = t.status; t.status = e.target.value; try { await saveData(); const request = db.requests.find(r => r.id === t.requestId); notify(request?.status === "완료" ? "연결된 모든 작업이 완료되어 요청도 완료 처리됐어요." : "작업 상태와 요청 상태를 함께 저장했어요."); } catch { t.status = previous; } render(); } }));
+  document.querySelectorAll("[data-task-status]").forEach(el => el.addEventListener("change", async e => { const t = db.tasks.find(x => x.id === e.target.dataset.taskStatus); if (t) { const previous = t.status,previousCompleted=t.completedAt; t.status = e.target.value;t.completedAt=t.status==="완료"?(t.completedAt||new Date().toISOString()):null; try { await saveData(); const request = db.requests.find(r => r.id === t.requestId); notify(request?.status === "완료" ? "연결된 모든 작업이 완료되어 요청도 완료 처리됐어요." : "작업 상태와 요청 상태를 함께 저장했어요."); } catch { t.status = previous;t.completedAt=previousCompleted; } render(); } }));
   document.querySelectorAll("[data-type]").forEach(el => el.addEventListener("click", () => { form.type = el.dataset.type; render(); }));
   const formProduct = document.getElementById("f-product"); if (formProduct && formProduct.tagName === "SELECT") formProduct.addEventListener("change", e => { const rule = productQuantityRule(e.target.value); form.product = e.target.value; form.quantity = rule.minimum; setFormFields(); form.product = e.target.value; form.quantity = rule.minimum; form.print_side = productPrintSides(e.target.value)[0]; render(); });
   const formQty = document.getElementById("f-quantity"); if (formQty) formQty.addEventListener("change", e => { const rule = productQuantityRule(form.product); e.target.value = normalizeQuantity(e.target.value, rule.singleUnit ? [] : rule.options, rule.minimum); form.quantity = e.target.value; });
-  const back = document.getElementById("form-back"); if (back) back.addEventListener("click", () => { setFormFields(); formStep--; render(); });
-  const next = document.getElementById("form-next"); if (next) next.addEventListener("click", async () => { if (!validateStep()) return; if (formStep < 2) { formStep++; render(); } else await submitRequest(); });
+  if (document.getElementById("rq-brand")) bindRequestFormEvents();
+  else {
+    const back = document.getElementById("form-back"); if (back) back.addEventListener("click", () => { setFormFields(); formStep--; render(); });
+    const next = document.getElementById("form-next"); if (next) next.addEventListener("click", async () => { if (!validateStep()) return; if (formStep < 2) { formStep++; render(); } else await submitRequest(); });
+  }
+  if(route==="master-data")bindMasterEvents();
   const fileForm = document.getElementById("detail-file-form"); if (fileForm) fileForm.addEventListener("submit", uploadDetailFiles);
   document.querySelectorAll("[data-file-download]").forEach(el => el.addEventListener("click", async () => { try { const result = await DesignFlowData.backend("design-review", { action: "file_link", file_id: el.dataset.fileDownload }); window.open(result.url, "_blank", "noopener"); } catch (error) { notify(`파일을 열지 못했어요: ${error.message}`); } }));
   const createReviewLink = document.getElementById("create-review-link"); if (createReviewLink) createReviewLink.addEventListener("click", async () => { createReviewLink.disabled = true; try { const result = await DesignFlowData.backend("design-review", { action: "create_link", request_id: selectedRequest }); reviewShareLink = result.url; db.files = await DesignFlowData.select("design_files", {}, "created_at.desc"); db.reviews = await DesignFlowData.select("design_reviews", {}, "created_at.desc"); notify(`${result.version}차 시안 검토 링크를 만들었어요.`); render(); } catch (error) { createReviewLink.disabled = false; notify(`링크를 만들지 못했어요: ${error.message}`); } });
@@ -455,24 +618,35 @@ function bindEvents() {
   const save = document.getElementById("save-analysis"); if (save) save.addEventListener("click", async () => { await saveAnalysis(false); notify("분석 제안을 저장했어요."); });
   const approve = document.getElementById("approve-analysis"); if (approve) approve.addEventListener("click", approveRequest);
   const rs = document.getElementById("request-status"); if (rs) rs.addEventListener("change", async e => { const r = db.requests.find(x => x.id === selectedRequest); if (db.tasks.some(t => t.requestId === r?.id)) { notify("작업이 생성된 요청은 작업관리의 진행 상태를 기준으로 자동 갱신됩니다."); render(); return; } const previous = r.status; r.status = e.target.value; try { await saveData(); notify("요청 상태를 변경했어요."); } catch { r.status = previous; } render(); });
-  const tds = document.getElementById("task-detail-status"); if (tds) tds.addEventListener("change", async e => { const t = db.tasks.find(x => x.id === selectedTask); const previous = t.status; t.status = e.target.value; try { await saveData(); const request = db.requests.find(r => r.id === t.requestId); notify(request?.status === "완료" ? "연결된 모든 작업이 완료되어 요청도 완료 처리됐어요." : "작업 상태와 요청 상태를 함께 저장했어요."); } catch { t.status = previous; } render(); });
+  const tds = document.getElementById("task-detail-status"); if (tds) tds.addEventListener("change", async e => { const t = db.tasks.find(x => x.id === selectedTask); const previous = t.status,previousCompleted=t.completedAt; t.status = e.target.value;t.completedAt=t.status==="완료"?(t.completedAt||new Date().toISOString()):null; try { await saveData(); const request = db.requests.find(r => r.id === t.requestId); notify(request?.status === "완료" ? "연결된 모든 작업이 완료되어 요청도 완료 처리됐어요." : "작업 상태와 요청 상태를 함께 저장했어요."); } catch { t.status = previous;t.completedAt=previousCompleted; } render(); });
+  const noteForm=document.getElementById("task-note-form");if(noteForm)noteForm.addEventListener("submit",async e=>{e.preventDefault();const content=document.getElementById("task-note-content").value.trim();if(!content)return;const note={task_id:selectedTask,note_type:document.getElementById("task-note-type").value,content,author_id:currentUser.id,author_name:currentProfile.display_name};try{await DesignFlowData.insert("task_notes",note);db.taskNotes.unshift({...note,created_at:new Date().toISOString()});notify("작업 메모를 저장했습니다.");render();}catch(error){notify(`메모를 저장하지 못했습니다: ${error.message}`);}});
   const addTime = document.getElementById("add-time"); if (addTime) addTime.addEventListener("click", logTime);
-  document.querySelectorAll(".check-row input").forEach(el => el.addEventListener("change", async () => { if (selectedTask) { const t = db.tasks.find(x => x.id === selectedTask); if (t && el.checked) t.status = "진행 중"; await saveData(); } }));
   bindQuoteEvents();
   bindPriceEvents();
 }
 async function submitRequest() {
+  if(!requestCart.length)return notify("접수할 품목을 추가해주세요.");
   const id = `DF-${crypto.randomUUID()}`;
-  const request = { id, requested_by: currentProfile ? currentUser?.id || null : null, title: form.title, type: form.type, brand: form.brand, store: form.store || null, requester: form.requester, contact: null, print_side: form.print_side || "단면", created: isoDay(), deadline: form.deadline || null, status: "접수", priority: "보통", purpose: form.purpose, details: form.details, product: form.product || "", quantity: form.quantity || "", use: form.use || "", reference: form.reference || null, ai: { summary: "", missing: [], steps: [] } };
+  const brand=db.brands.find(item=>item.id===requestDraft.brandId);
+  const labelType={NEW:"신규 디자인 제작",REORDER:"기존 디자인 동일 주문",MODIFY:"기존 디자인 수정"};
+  const summary=requestCart.map((item,index)=>`${index+1}. ${item.item_name_snapshot||item.design_name_snapshot} ${item.quantity}개`).join("\n");
+  const purpose=[...new Set(requestCart.map(item=>item.purpose_snapshot).filter(Boolean))].join(", ")||"기존 디자인 주문";
+  const deadline=requestCart.map(item=>item.deadline).sort()[0];
+  const request = { id, requested_by: currentProfile?.role === "sv" ? currentUser?.id || null : null, title: requestDraft.title, type: requestCart.length===1?labelType[requestCart[0].request_type]:"복합 요청", brand: brand?.name||"", store: requestDraft.store || null, requester: requestDraft.requester, contact: null, created: isoDay(), deadline, status: "접수", priority: "보통", purpose, details: summary, product: requestCart.map(item=>item.item_name_snapshot||item.design_name_snapshot).join(", "), quantity: `${requestCart.length}개 품목`, print_side: "단면", use: null, reference: null, ai: { summary: "", missing: [], steps: [] } };
+  const items=requestCart.map((item,index)=>({request_type:item.request_type,brand_id:item.brand_id,master_item_id:item.master_item_id||null,design_archive_id:item.design_archive_id||null,brand_name_snapshot:item.brand_name_snapshot,item_name_snapshot:item.item_name_snapshot||null,quantity_unit_snapshot:item.quantity_unit_snapshot||"개",purpose_snapshot:item.purpose_snapshot||null,design_name_snapshot:item.design_name_snapshot||null,specifications_snapshot:item.specifications_snapshot||{},quantity:item.quantity,deadline:item.deadline,details:item.details||null,modification_types:item.modification_types||[],attachment_paths:[],sort_order:index}));
+  const totalFiles=requestCart.reduce((sum,item)=>sum+(item.attachments||[]).length,0);
+  if(totalFiles>10)return notify("한 요청에는 첨부 파일을 최대 10개까지 올릴 수 있습니다.");
   try {
-    const publicFields = (({ id, title, type, brand, store, requester, deadline, purpose, details, product, quantity, print_side, use, reference }) => ({ id, title, type, brand, store, requester, deadline, purpose, details, product, quantity, ...(requestCatalogAvailable ? { print_side } : {}), use, reference }))(request);
-    await DesignFlowData.insert("requests", currentProfile ? rowRequest(request) : publicFields, !currentProfile);
+    await DesignFlowData.rpc("create_request_with_items",{p_request:request,p_items:items},!currentProfile);
     fileUploadError = "";
-    if (form.attachments?.length) {
-      try { await uploadRequestAttachments(request); }
-      catch (error) { fileUploadError = `요청은 접수됐지만 첨부 파일 일부를 올리지 못했습니다. 요청 상세에서 다시 올려주세요. (${error.message})`; }
-    }
-    if (currentProfile) { db.requests.unshift(request); if (currentProfile.role === "designer") savedRequestRows.set(id, JSON.stringify(rowRequest(request))); }
+    try {
+      for(let index=0;index<requestCart.length;index++){
+        const paths=[];
+        for(const file of requestCart[index].attachments||[]){const mime=getAllowedFileType(file);if(!mime||file.size>20*1024*1024)throw new Error(`${file.name}: 지원되지 않는 형식이거나 20MB를 초과했습니다.`);let path;if(currentUser){path=`${id}/request_attachment/${crypto.randomUUID()}.${storageFileExtension(file)}`;await DesignFlowData.uploadFile(file,path,mime);await DesignFlowData.insert("design_files",{request_id:id,kind:"request_attachment",version:0,file_name:file.name,object_path:path,mime_type:mime,size_bytes:file.size,description:null,uploaded_by:currentUser.id});}else path=await DesignFlowData.uploadPublicRequestFile(file,id,mime);paths.push(path);}
+        if(paths.length)await DesignFlowData.rpc("add_request_item_attachments",{p_request_id:id,p_sort_order:index,p_paths:paths},!currentProfile);
+      }
+    }catch(error){fileUploadError=`요청은 접수됐지만 일부 첨부 파일을 올리지 못했습니다. (${error.message})`;}
+    if (currentProfile) { db.requests.unshift(mapRequest(request));try{db.requestItems.push(...await DesignFlowData.select("request_items",{request_id:`eq.${id}`},"sort_order.asc"));}catch{} if (currentProfile.role === "designer") savedRequestRows.set(id, JSON.stringify(rowRequest(request))); }
     selectedRequest = id; route = "request-success"; render();
   } catch (error) { const el = document.getElementById("form-error"); if (el) el.textContent = `접수하지 못했어요: ${error.message}`; else notify(`접수하지 못했어요: ${error.message}`); }
 }
@@ -555,7 +729,7 @@ async function approveRequest() {
   if (r.status === "작업 진행" || r.status === "완료") return notify("이미 작업이 생성된 요청입니다.");
   if (!r.ai.steps.length) return notify("작업 단계를 하나 이상 추가한 뒤 승인해주세요.");
   r.status = "작업 진행";
-  r.ai.steps.forEach((s, i) => db.tasks.push({ id: `TS-${String(Date.now() + i).slice(-5)}`, requestId: r.id, name: r.title, step: s.name, brand: r.brand, due: r.deadline || isoDay(7), status: "대기", priority: r.priority, estimate: s.minutes, actual: 0 }));
+  r.ai.steps.forEach((s, i) => db.tasks.push({ id: `TS-${String(Date.now() + i).slice(-5)}`, requestId: r.id, name: r.title, step: s.name, brand: r.brand, due: r.deadline || isoDay(7), status: "접수", priority: r.priority, estimate: s.minutes, actual: 0, completedAt: null }));
   await saveData(); notify("요청을 승인하고 작업을 만들었어요."); render();
 }
 async function logTime() {
@@ -622,6 +796,6 @@ function bindPriceEvents() {
 }
 function editingPriceActive() { const p = db.prices.find(x => String(x.id) === String(priceEditId)); return p ? p.is_active : true; }
 
-window.addEventListener("hashchange", () => { const next = location.hash.slice(1); if (["dashboard", "requests", "tasks", "calendar", "quote", "prices"].includes(next)) go(next); });
+window.addEventListener("hashchange", () => { const next = location.hash.slice(1); if (["dashboard", "requests", "tasks", "calendar", "quote", "prices", "master-data"].includes(next)) go(next); });
 render();
 initializeApp();
