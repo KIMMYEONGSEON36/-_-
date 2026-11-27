@@ -33,6 +33,17 @@ create table if not exists public.master_options (
   unique (option_type, name)
 );
 
+create table if not exists public.master_addresses (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  address text not null,
+  search_terms text not null default '',
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.design_archive (
   id uuid primary key default gen_random_uuid(),
   brand_id uuid not null references public.master_brands(id) on delete restrict,
@@ -58,6 +69,9 @@ create table if not exists public.request_items (
   brand_name_snapshot text not null,
   item_name_snapshot text,
   quantity_unit_snapshot text not null default '개',
+  size_snapshot text,
+  delivery_address_id uuid references public.master_addresses(id) on delete set null,
+  delivery_address_snapshot text,
   purpose_snapshot text,
   design_name_snapshot text,
   specifications_snapshot jsonb not null default '{}'::jsonb check (jsonb_typeof(specifications_snapshot) = 'object'),
@@ -70,8 +84,15 @@ create table if not exists public.request_items (
   created_at timestamptz not null default now()
 );
 alter table public.master_items add column if not exists quantity_unit text not null default '개';
+alter table public.master_items add column if not exists quantity_options jsonb not null default '[1,5,10,20,30,50,100]'::jsonb check (jsonb_typeof(quantity_options) = 'array');
+alter table public.master_items add column if not exists size_options jsonb not null default '[]'::jsonb check (jsonb_typeof(size_options) = 'array');
+alter table public.master_items add column if not exists request_fields jsonb not null default '{"purpose":true,"quantity":true,"size":true,"deadline":true,"reference_file":true,"details":true,"delivery_address":true}'::jsonb check (jsonb_typeof(request_fields) = 'object');
 
 alter table public.request_items add column if not exists quantity_unit_snapshot text not null default '개';
+alter table public.request_items add column if not exists size_snapshot text;
+alter table public.request_items add column if not exists delivery_address_id uuid references public.master_addresses(id) on delete set null;
+alter table public.request_items add column if not exists delivery_address_snapshot text;
+alter table public.request_items alter column deadline drop not null;
 create index if not exists request_items_request_idx on public.request_items(request_id, sort_order);
 create index if not exists design_archive_brand_idx on public.design_archive(brand_id, is_active, is_reorderable, sort_order);
 
@@ -145,14 +166,15 @@ alter table public.master_brands enable row level security;
 alter table public.master_items enable row level security;
 alter table public.master_options enable row level security;
 alter table public.design_archive enable row level security;
+alter table public.master_addresses enable row level security;
 alter table public.request_items enable row level security;
 alter table public.task_status_history enable row level security;
 alter table public.task_notes enable row level security;
 
-revoke all on public.master_brands, public.master_items, public.master_options, public.design_archive,
+revoke all on public.master_brands, public.master_items, public.master_options, public.master_addresses, public.design_archive,
   public.request_items, public.task_status_history, public.task_notes from anon, authenticated;
-grant select on public.master_brands, public.master_items, public.master_options, public.design_archive to anon, authenticated;
-grant insert, update, delete on public.master_brands, public.master_items, public.master_options, public.design_archive to authenticated;
+grant select on public.master_brands, public.master_items, public.master_options, public.master_addresses, public.design_archive to anon, authenticated;
+grant insert, update, delete on public.master_brands, public.master_items, public.master_options, public.master_addresses, public.design_archive to authenticated;
 grant select on public.request_items, public.task_status_history, public.task_notes to authenticated;
 grant insert on public.task_notes to authenticated;
 grant usage, select on sequence public.task_status_history_id_seq to authenticated;
@@ -175,6 +197,12 @@ drop policy if exists "staff reads purpose masters" on public.master_options;
 create policy "staff reads purpose masters" on public.master_options for select to authenticated using (public.current_design_flow_role() in ('designer','sv'));
 drop policy if exists "designer manages options" on public.master_options;
 create policy "designer manages options" on public.master_options for all to authenticated using (public.current_design_flow_role()='designer') with check (public.current_design_flow_role()='designer');
+drop policy if exists "public reads active request addresses" on public.master_addresses;
+create policy "public reads active request addresses" on public.master_addresses for select to anon using (is_active);
+drop policy if exists "staff reads request addresses" on public.master_addresses;
+create policy "staff reads request addresses" on public.master_addresses for select to authenticated using (public.current_design_flow_role() in ('designer','sv'));
+drop policy if exists "designer manages request addresses" on public.master_addresses;
+create policy "designer manages request addresses" on public.master_addresses for all to authenticated using (public.current_design_flow_role()='designer') with check (public.current_design_flow_role()='designer');
 drop policy if exists "public reads active designs" on public.design_archive;
 create policy "public reads active designs" on public.design_archive for select to anon using (is_active);
 drop policy if exists "staff reads active designs" on public.design_archive;
@@ -207,8 +235,8 @@ begin
   insert into public.requests(id,requested_by,title,type,brand,store,requester,contact,created,deadline,status,priority,purpose,details,product,quantity,print_side,use,reference,ai)
   values (request_id_value,case when public.current_design_flow_role()='sv' then auth.uid() else null end,coalesce(p_request->>'title','디자인 요청'),coalesce(p_request->>'type','NEW'),coalesce(p_request->>'brand',''),p_request->>'store',coalesce(p_request->>'requester',''),p_request->>'contact',coalesce((p_request->>'created')::date,current_date),nullif(p_request->>'deadline','')::date,coalesce(p_request->>'status','접수'),coalesce(p_request->>'priority','보통'),coalesce(p_request->>'purpose',''),coalesce(p_request->>'details',''),p_request->>'product',p_request->>'quantity',coalesce(p_request->>'print_side','단면'),p_request->>'use',p_request->>'reference',p_request->'ai');
   for item in select value from jsonb_array_elements(p_items) loop
-    insert into public.request_items(request_id,request_type,brand_id,master_item_id,design_archive_id,brand_name_snapshot,item_name_snapshot,quantity_unit_snapshot,purpose_snapshot,design_name_snapshot,specifications_snapshot,quantity,deadline,details,modification_types,attachment_paths,sort_order)
-    values (request_id_value,item->>'request_type',nullif(item->>'brand_id','')::uuid,nullif(item->>'master_item_id','')::uuid,nullif(item->>'design_archive_id','')::uuid,coalesce(item->>'brand_name_snapshot',''),item->>'item_name_snapshot',coalesce(item->>'quantity_unit_snapshot','개'),item->>'purpose_snapshot',item->>'design_name_snapshot',coalesce(item->'specifications_snapshot','{}'::jsonb),coalesce(item->>'quantity',''),coalesce((item->>'deadline')::date,current_date),item->>'details',coalesce(array(select jsonb_array_elements_text(item->'modification_types')),'{}'),coalesce(item->'attachment_paths','[]'::jsonb),coalesce((item->>'sort_order')::integer,0));
+    insert into public.request_items(request_id,request_type,brand_id,master_item_id,design_archive_id,brand_name_snapshot,item_name_snapshot,quantity_unit_snapshot,size_snapshot,delivery_address_id,delivery_address_snapshot,purpose_snapshot,design_name_snapshot,specifications_snapshot,quantity,deadline,details,modification_types,attachment_paths,sort_order)
+    values (request_id_value,item->>'request_type',nullif(item->>'brand_id','')::uuid,nullif(item->>'master_item_id','')::uuid,nullif(item->>'design_archive_id','')::uuid,coalesce(item->>'brand_name_snapshot',''),item->>'item_name_snapshot',coalesce(item->>'quantity_unit_snapshot','개'),item->>'size_snapshot',nullif(item->>'delivery_address_id','')::uuid,item->>'delivery_address_snapshot',item->>'purpose_snapshot',item->>'design_name_snapshot',coalesce(item->'specifications_snapshot','{}'::jsonb),coalesce(item->>'quantity',''),nullif(item->>'deadline','')::date,item->>'details',coalesce(array(select jsonb_array_elements_text(item->'modification_types')),'{}'),coalesce(item->'attachment_paths','[]'::jsonb),coalesce((item->>'sort_order')::integer,0));
   end loop;
   return request_id_value;
 end $$;
@@ -231,7 +259,7 @@ grant execute on function public.create_request_with_items(jsonb,jsonb) to anon,
 grant execute on function public.add_request_item_attachments(text,integer,text[]) to anon,authenticated;
 grant select, insert, update, delete on public.task_status_history to authenticated;
 grant select, insert, update, delete on public.task_notes to authenticated;
-grant select, insert, update, delete on public.master_brands, public.master_items, public.master_options, public.design_archive to authenticated;
+grant select, insert, update, delete on public.master_brands, public.master_items, public.master_options, public.master_addresses, public.design_archive to authenticated;
 grant delete on public.requests to service_role;
 
 commit;
