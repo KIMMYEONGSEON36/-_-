@@ -18,6 +18,9 @@ function isArchiveObjectPath(value) {
   // single file directly inside either archive folder.
   return /^(?:archive|아카이브)\/[^/]+$/.test(path) && !path.includes("..") && !path.includes("\\");
 }
+function isArchiveThumbnailPath(value) {
+  return isArchiveObjectPath(value) && /\.(?:png|jpe?g|webp)$/i.test(String(value || ""));
+}
 function tokenHash(token) { return crypto.createHash("sha256").update(token).digest("hex"); }
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml", "application/pdf", "application/postscript", "image/vnd.adobe.photoshop"]);
 function headers(prefer) {
@@ -170,11 +173,14 @@ module.exports = async function handler(req, res) {
     if (action === "archive_file_link") {
       const path = String(req.body?.path || "");
       if (!isArchiveObjectPath(path)) return json(res, 400, { error: "파일 경로가 올바르지 않습니다." });
-      const encoded = encodeURIComponent(path);
-      const thumbnail = await one(`/rest/v1/design_archive?select=id&thumbnail_path=eq.${encoded}&is_active=eq.true&limit=1`);
-      if (!thumbnail) {
+      // Public requesters need thumbnail links. Do not query design_archive
+      // here: its RLS/table grants may not include the server API role, and
+      // the public archive listing already only returns active thumbnails.
+      // Restrict the unauthenticated path to raster images under archive/.
+      if (!isArchiveThumbnailPath(path)) {
         const profile = await requireStaff(req);
         if (profile.role !== "designer") return json(res, 403, { error: "원본 파일은 디자인팀만 열 수 있습니다." });
+        const encoded = encodeURIComponent(path);
         const original = await one(`/rest/v1/design_archive?select=id&original_path=eq.${encoded}&is_active=eq.true&limit=1`);
         if (!original) return json(res, 404, { error: "활성 디자인 자료에서 파일을 찾을 수 없습니다." });
       }
